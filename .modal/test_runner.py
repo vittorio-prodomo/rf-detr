@@ -78,18 +78,29 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
     os.chdir("/root/project")
     
     # Verify GPU availability
-    print("\n" + "="*80)
-    print("GPU ENVIRONMENT CHECK")
-    print("="*80)
     try:
         import torch
-        print(f"🎮 GPU Available: {torch.cuda.is_available()}")
+        gpu_info = (
+            f"\n{'='*80}\n"
+            f"GPU ENVIRONMENT CHECK\n"
+            f"{'='*80}\n"
+            f"🎮 GPU Available: {torch.cuda.is_available()}\n"
+        )
         if torch.cuda.is_available():
-            print(f"🎮 GPU Device: {torch.cuda.get_device_name(0)}")
-            print(f"🎮 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+            gpu_info += (
+                f"🎮 GPU Device: {torch.cuda.get_device_name(0)}\n"
+                f"🎮 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB\n"
+            )
+        gpu_info += f"{'='*80}\n"
+        print(gpu_info)
     except Exception as e:
-        print(f"⚠️  GPU check failed: {e}")
-    print("="*80 + "\n")
+        print(
+            f"\n{'='*80}\n"
+            f"GPU ENVIRONMENT CHECK\n"
+            f"{'='*80}\n"
+            f"⚠️  GPU check failed: {e}\n"
+            f"{'='*80}\n"
+        )
     
     # Build pytest command
     pytest_cmd = ["pytest", test_path]
@@ -100,15 +111,17 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
         import shlex
         pytest_cmd.extend(shlex.split(pytest_args))
     
-    # Force colored output for better readability
-    pytest_cmd.append("--color=yes")
+    # Disable colored output for clean logs (especially for CI)
+    pytest_cmd.append("--color=no")
     
-    print("="*80)
-    print(f"RUNNING TESTS")
-    print("="*80)
-    print(f"Command: {' '.join(pytest_cmd)}")
-    print(f"Working directory: {os.getcwd()}")
-    print("="*80 + "\n")
+    print(
+        f"{'='*80}\n"
+        f"RUNNING TESTS\n"
+        f"{'='*80}\n"
+        f"Command: {' '.join(pytest_cmd)}\n"
+        f"Working directory: {os.getcwd()}\n"
+        f"{'='*80}\n"
+    )
     
     # Create output directory for pytest logs
     output_dir = Path("/root/project/test-outputs")
@@ -132,12 +145,14 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
             # Also print to console for real-time viewing
             print(result.stdout, end="")
         
-        print("\n" + "="*80)
-        print("TEST EXECUTION COMPLETE")
-        print("="*80)
-        print(f"Exit code: {result.returncode}")
-        print(f"📄 Test output saved to: {output_file}")
-        print("="*80 + "\n")
+        print(
+            f"\n{'='*80}\n"
+            f"TEST EXECUTION COMPLETE\n"
+            f"{'='*80}\n"
+            f"Exit code: {result.returncode}\n"
+            f"📄 Test output saved to: {output_file}\n"
+            f"{'='*80}\n"
+        )
         
         # Read the log file content to return
         with open(output_file, "r") as f:
@@ -151,11 +166,13 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
         }
     
     except Exception as e:
-        print("\n" + "="*80)
-        print("ERROR DURING TEST EXECUTION")
-        print("="*80)
-        print(f"Error: {e}")
-        print("="*80 + "\n")
+        print(
+            f"\n{'='*80}\n"
+            f"ERROR DURING TEST EXECUTION\n"
+            f"{'='*80}\n"
+            f"Error: {e}\n"
+            f"{'='*80}\n"
+        )
         
         return {
             "returncode": 1,
@@ -171,14 +188,16 @@ def main(
     pytest_args: str = "-v",
 ):
     """Local entrypoint to run tests on Modal GPU."""
-    print("\n" + "="*80)
-    print("RF-DETR GPU TEST RUNNER")
-    print("="*80)
-    print(f"📁 Test Path: {test_path}")
-    print(f"⚙️  Pytest Args: {pytest_args}")
-    print(f"🎮 GPU: {GPU_TYPE}")
-    print(f"⏱️  Timeout: 1 hour")
-    print("="*80 + "\n")
+    print(
+        f"\n{'='*80}\n"
+        f"RF-DETR GPU TEST RUNNER\n"
+        f"{'='*80}\n"
+        f"📁 Test Path: {test_path}\n"
+        f"⚙️  Pytest Args: {pytest_args}\n"
+        f"🎮 GPU: {GPU_TYPE}\n"
+        f"⏱️  Timeout: 1 hour\n"
+        f"{'='*80}\n"
+    )
     
     # Run tests remotely with streaming output
     result = run_tests.remote(test_path=test_path, pytest_args=pytest_args)
@@ -193,17 +212,20 @@ def main(
             f.write(result["pytest_output"])
         print(f"📄 Test output saved to: {local_output_file}")
     
-    print("\n" + "="*80)
-    print("FINAL RESULTS")
-    print("="*80)
-    print(f"Return Code: {result['returncode']}")
-    print(f"Success: {result['success']}")
+    final_status = (
+        f"\n{'='*80}\n"
+        f"FINAL RESULTS\n"
+        f"{'='*80}\n"
+        f"Return Code: {result['returncode']}\n"
+        f"Success: {result['success']}\n"
+    )
     
     if not result["success"]:
         if "error" in result:
-            print(f"Error: {result['error']}")
-        print("="*80 + "\n")
+            final_status += f"Error: {result['error']}\n"
+        final_status += f"{'='*80}\n"
+        print(final_status)
         sys.exit(result["returncode"])
     
-    print("="*80 + "\n")
-    print("✅ All tests passed!")
+    final_status += f"{'='*80}\n\n✅ All tests passed!"
+    print(final_status)

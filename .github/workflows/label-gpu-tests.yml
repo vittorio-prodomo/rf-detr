@@ -37,7 +37,12 @@ jobs:
             let comment = '## 🎮 GPU Test Results\n\n';
             
             if (fs.existsSync(path)) {
-              const output = fs.readFileSync(path, 'utf8');
+              let output = fs.readFileSync(path, 'utf8');
+              
+              // Strip ANSI color codes for clean display
+              // eslint-disable-next-line no-control-regex
+              output = output.replace(/\x1b\[[0-9;]*m/g, '');
+              
               const lines = output.split('\n');
               
               // Extract summary line (usually at the end)
