@@ -1,27 +1,14 @@
 """
 GPU Test Runner for RF-DETR
-
 Run tests on Modal's GPU infrastructure with pytest interface similar to local execution.
 
 Usage:
-    # Run all tests
-    modal run .modal/test_runner.py
-
-    # Run specific test file
-    modal run .modal/test_runner.py --test-path tests/datasets/test_synthetic.py
-
-    # Run with pytest flags (e.g., verbose, specific tests)
-    modal run .modal/test_runner.py --pytest-args "-v -k test_name"
-
-    # Run tests in a specific directory
-    modal run .modal/test_runner.py --test-path tests/datasets/
-
-Environment Variables Required:
-    - MODAL_TOKEN_ID: Your Modal token ID
-    - MODAL_TOKEN_SECRET: Your Modal token secret
+    modal run .modal/test_runner.py --test-path tests/ --pytest-args "-v"
+    modal run .modal/test_runner.py --test-path tests/datasets/ --pytest-args "-v -k synthetic"
 """
 
 import sys
+from pathlib import Path
 import modal
 
 # Create Modal app
@@ -29,6 +16,7 @@ app = modal.App("rf-detr-gpu-tests")
 
 # Start with PyTorch public image for faster builds
 # Using PyTorch 2.8 with CUDA 12.6
+# Note: copy=True is required when running build commands after add_local_dir
 image = (
     modal.Image.from_registry(
         "nvcr.io/nvidia/pytorch:25.01-py3",  # PyTorch 2.8 with CUDA 12.6
@@ -36,9 +24,35 @@ image = (
     )
     .apt_install("git")
     .pip_install("uv")
+    # Copy project files, excluding large/unnecessary files using .gitignore patterns
+    # Using copy=True so we can install dependencies during build
+    .add_local_dir(
+        ".",
+        remote_path="/root/project",
+        copy=True,
+        # todo: improve this ignoring to be dynamic
+        ignore=[
+            ".git",
+            "__pycache__",
+            "*.pyc",
+            ".pytest_cache",
+            ".venv",
+            "venv",
+            "*.egg-info",
+            ".DS_Store",
+            "*.log",
+            ".modal",
+            "debugging",
+            "docs",
+            "test_synthetic_output",
+            "uv.lock",
+        ]
+    )
+    .workdir("/root/project")
+    # Install dependencies during image build for faster execution
+    # Note: tests dependencies are in [dependency-groups] not [project.optional-dependencies]
     .run_commands(
-        # Install the package with tests dependency group
-        "cd /root && uv pip install --system --group tests ."
+        "uv pip install -e . --group tests --system"
     )
 )
 
@@ -46,22 +60,20 @@ image = (
 @app.function(
     image=image,
     gpu="L4",  # NVIDIA L4 GPU
-    timeout=3600,  # Hard 1 hour timeout safety limit - session will be terminated after this
+    timeout=3600,  # Hard 1 hour timeout safety limit
 )
 def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
-    """
-    Run pytest on Modal GPU infrastructure.
-    
-    Args:
-        test_path: Path to test file or directory (default: "tests/")
-        pytest_args: Additional pytest arguments (default: "-v")
-    
-    Returns:
-        dict: Test results with stdout, stderr, and return code
-    """
+    """Run pytest on Modal GPU infrastructure."""
     import subprocess
+    import os
+    
+    # Change to project directory
+    os.chdir("/root/project")
     
     # Verify GPU availability
+    print("\n" + "="*80)
+    print("GPU ENVIRONMENT CHECK")
+    print("="*80)
     try:
         import torch
         print(f"🎮 GPU Available: {torch.cuda.is_available()}")
@@ -70,32 +82,39 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
             print(f"🎮 GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
     except Exception as e:
         print(f"⚠️  GPU check failed: {e}")
+    print("="*80 + "\n")
     
     # Build pytest command
     pytest_cmd = ["pytest", test_path]
     
     # Add user-provided pytest arguments
     if pytest_args:
-        pytest_cmd.extend(pytest_args.split())
+        # Split args properly, handling quoted strings
+        import shlex
+        pytest_cmd.extend(shlex.split(pytest_args))
     
     # Force colored output for better readability
     pytest_cmd.append("--color=yes")
     
-    print(f"\n{'='*80}")
-    print(f"🚀 Running command: {' '.join(pytest_cmd)}")
-    print(f"{'='*80}\n")
+    print("="*80)
+    print(f"RUNNING TESTS")
+    print("="*80)
+    print(f"Command: {' '.join(pytest_cmd)}")
+    print(f"Working directory: {os.getcwd()}")
+    print("="*80 + "\n")
     
-    # Run pytest
+    # Run pytest and stream output
     try:
         result = subprocess.run(
             pytest_cmd,
-            capture_output=False,  # Stream output in real-time
-            text=True
+            cwd="/root/project",
         )
         
-        print(f"\n{'='*80}")
-        print(f"✅ Tests completed with exit code: {result.returncode}")
-        print(f"{'='*80}\n")
+        print("\n" + "="*80)
+        print("TEST EXECUTION COMPLETE")
+        print("="*80)
+        print(f"Exit code: {result.returncode}")
+        print("="*80 + "\n")
         
         return {
             "returncode": result.returncode,
@@ -103,9 +122,11 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
         }
     
     except Exception as e:
-        print(f"\n{'='*80}")
-        print(f"❌ Test execution failed: {e}")
-        print(f"{'='*80}\n")
+        print("\n" + "="*80)
+        print("ERROR DURING TEST EXECUTION")
+        print("="*80)
+        print(f"Error: {e}")
+        print("="*80 + "\n")
         
         return {
             "returncode": 1,
@@ -119,35 +140,30 @@ def main(
     test_path: str = "tests/",
     pytest_args: str = "-v",
 ):
-    """
-    Local entrypoint to run tests on Modal GPU.
-    
-    Args:
-        test_path: Path to test file or directory (default: "tests/")
-        pytest_args: Additional pytest arguments (default: "-v")
-    """
-    print(f"\n{'='*80}")
-    print(f"🚀 RF-DETR GPU Test Runner")
-    print(f"{'='*80}")
+    """Local entrypoint to run tests on Modal GPU."""
+    print("\n" + "="*80)
+    print("RF-DETR GPU TEST RUNNER")
+    print("="*80)
     print(f"📁 Test Path: {test_path}")
     print(f"⚙️  Pytest Args: {pytest_args}")
     print(f"🎮 GPU: L4")
-    print(f"{'='*80}\n")
+    print(f"⏱️  Timeout: 1 hour")
+    print("="*80 + "\n")
     
     # Run tests remotely with streaming output
     result = run_tests.remote(test_path=test_path, pytest_args=pytest_args)
     
-    print(f"\n{'='*80}")
-    print(f"📊 Final Results")
-    print(f"{'='*80}")
+    print("\n" + "="*80)
+    print("FINAL RESULTS")
+    print("="*80)
     print(f"Return Code: {result['returncode']}")
     print(f"Success: {result['success']}")
     
     if not result["success"]:
         if "error" in result:
             print(f"Error: {result['error']}")
-        print(f"{'='*80}\n")
+        print("="*80 + "\n")
         sys.exit(result["returncode"])
     
-    print(f"{'='*80}\n")
+    print("="*80 + "\n")
     print("✅ All tests passed!")
