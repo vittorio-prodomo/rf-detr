@@ -21,6 +21,4 @@ jobs:
         uses: ./.github/workflows/_modal-gpu-tests.yml
         with:
           ref: ${{ github.event.inputs.ref || github.sha }}
-        secrets:
-            MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-            MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        secrets: inherit

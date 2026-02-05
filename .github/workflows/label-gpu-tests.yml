@@ -18,9 +18,7 @@ jobs:
         uses: ./.github/workflows/_modal-gpu-tests.yml
         with:
           ref: ${{ github.event.pull_request.head.sha }}
-        secrets:
-          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
-          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        secrets: inherit
 
       - name: Remove label after completion
         uses: actions-ecosystem/action-remove-labels@v1
