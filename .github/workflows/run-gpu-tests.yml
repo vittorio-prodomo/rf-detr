@@ -13,12 +13,8 @@ on:
         default: ""
 
 jobs:
-  call:
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Call reusable workflow
-        uses: ./.github/workflows/_modal-gpu-tests.yml
-        with:
-          ref: ${{ github.event.inputs.ref || github.sha }}
-        secrets: inherit
+  call-modal-gpu-tests:
+    uses: ./.github/workflows/_modal-gpu-tests.yml
+    with:
+      ref: ${{ github.event.inputs.ref || github.sha }}
+    secrets: inherit
