@@ -42,6 +42,7 @@ MODAL_GPU=A100 modal run .modal/test_runner.py
 ```
 
 The test runner will automatically:
+
 - Build the container image with dependencies
 - Run tests on the specified GPU (default: L4)
 - Stream output in real-time
@@ -53,11 +54,11 @@ The test runner will automatically:
 
 1. Add the `gpu-tests` label to any PR
 2. The workflow will automatically:
-   - Run tests on Modal GPU
-   - Capture pytest output to a log file
-   - Upload the log as an artifact
-   - Post a comment on the PR with test results
-   - Remove the label after completion
+    - Run tests on Modal GPU
+    - Capture pytest output to a log file
+    - Upload the log as an artifact
+    - Post a comment on the PR with test results
+    - Remove the label after completion
 
 ### Workflow Files
 
@@ -68,6 +69,7 @@ The test runner will automatically:
 ### Required Secrets
 
 Set these in your repository settings:
+
 - `MODAL_TOKEN_ID`: Your Modal token ID
 - `MODAL_TOKEN_SECRET`: Your Modal token secret
 
@@ -80,26 +82,30 @@ Set these in your repository settings:
 ### Test Execution Flow
 
 1. **Modal builds container image**
-   - Base: NVIDIA PyTorch 2.8 with CUDA 12.6
-   - Install: uv + project dependencies from `pyproject.toml`
-   - Copy: Project files (excluding large/unnecessary files)
+
+    - Base: NVIDIA PyTorch 2.8 with CUDA 12.6
+    - Install: uv + project dependencies from `pyproject.toml`
+    - Copy: Project files (excluding large/unnecessary files)
 
 2. **Tests run on GPU**
-   - NVIDIA GPU (default: L4 with 24GB VRAM)
-   - pytest executes with provided arguments
-   - Output streams to console in real-time
-   - Output also saved to `/root/project/test-outputs/pytest-output.log`
+
+    - NVIDIA GPU (default: L4 with 24GB VRAM)
+    - pytest executes with provided arguments
+    - Output streams to console in real-time
+    - Output also saved to `/root/project/test-outputs/pytest-output.log`
 
 3. **Results handling**
-   - **Local**: Output displayed in terminal, log file saved remotely
-   - **CI**: 
-     - pytest output saved to `test-outputs/pytest-output.log`
-     - Uploaded as GitHub Actions artifact
-     - Posted as PR comment (if triggered by label)
+
+    - **Local**: Output displayed in terminal, log file saved remotely
+    - **CI**:
+        - pytest output saved to `test-outputs/pytest-output.log`
+        - Uploaded as GitHub Actions artifact
+        - Posted as PR comment (if triggered by label)
 
 ### Output Capture
 
 The test runner captures pytest output in two ways:
+
 - **Console**: Real-time streaming for monitoring
 - **File**: Complete log saved to `test-outputs/pytest-output.log`
 
@@ -123,6 +129,7 @@ Available GPU types: L4, T4, A10G, A100, H100, etc. (see Modal documentation for
 You can customize what tests to run:
 
 **Local:**
+
 ```bash
 modal run .modal/test_runner.py --test-path tests/models/ --pytest-args "-v -x"
 ```
@@ -135,6 +142,7 @@ The reusable workflow runs all tests by default. GPU type can be configured via 
 ### Check GPU availability
 
 The test runner automatically prints GPU information:
+
 ```
 🎮 GPU Available: True
 🎮 GPU Device: NVIDIA L4
@@ -144,17 +152,20 @@ The test runner automatically prints GPU information:
 ### View full logs
 
 If tests fail, check:
+
 1. **Local**: Terminal output
-2. **CI**: 
-   - GitHub Actions logs for full output
-   - Download `pytest-output` artifact for clean pytest logs only
+2. **CI**:
+    - GitHub Actions logs for full output
+    - Download `pytest-output` artifact for clean pytest logs only
 
 ### Common Issues
 
 **"Modal credentials not found"**
+
 - Set `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET` environment variables
 
 **Tests timeout**
+
 - Default timeout is 1 hour
 - Increase in `test_runner.py` if needed: `timeout=7200`
 
@@ -169,6 +180,7 @@ If tests fail, check:
 ## Support
 
 For issues or questions:
+
 1. Check GitHub Actions logs
 2. Review Modal dashboard for infrastructure issues
 3. Check pytest-output artifact for clean test logs

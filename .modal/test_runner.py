@@ -5,14 +5,15 @@ Run tests on Modal's GPU infrastructure with pytest interface similar to local e
 Usage:
     modal run .modal/test_runner.py --test-path tests/ --pytest-args "-v"
     modal run .modal/test_runner.py --test-path tests/datasets/ --pytest-args "-v -k synthetic"
-    
+
 Environment Variables:
     MODAL_GPU: GPU type to use (default: L4, options: L4, T4, A10G, A100, etc.)
 """
 
-import sys
 import os
+import sys
 from pathlib import Path
+
 import modal
 
 # Create Modal app with profile name from environment or default
@@ -71,12 +72,12 @@ image = (
 )
 def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
     """Run pytest on Modal GPU infrastructure."""
-    import subprocess
     import os
-    
+    import subprocess
+
     # Change to project directory
     os.chdir("/root/project")
-    
+
     # Verify GPU availability
     try:
         import torch
@@ -101,19 +102,19 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
             f"⚠️  GPU check failed: {e}\n"
             f"{'='*80}\n"
         )
-    
+
     # Build pytest command
     pytest_cmd = ["pytest", test_path]
-    
+
     # Add user-provided pytest arguments
     if pytest_args:
         # Split args properly, handling quoted strings
         import shlex
         pytest_cmd.extend(shlex.split(pytest_args))
-    
+
     # Disable colored output for clean logs (especially for CI)
     pytest_cmd.append("--color=no")
-    
+
     print(
         f"{'='*80}\n"
         f"RUNNING TESTS\n"
@@ -122,12 +123,12 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
         f"Working directory: {os.getcwd()}\n"
         f"{'='*80}\n"
     )
-    
+
     # Create output directory for pytest logs
     output_dir = Path("/root/project/test-outputs")
     output_dir.mkdir(exist_ok=True)
     output_file = output_dir / "pytest-output.log"
-    
+
     # Run pytest and capture output to both console and file
     try:
         with open(output_file, "w") as log_file:
@@ -139,12 +140,12 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
                 stderr=subprocess.STDOUT,
                 text=True,
             )
-            
+
             # Write to file
             log_file.write(result.stdout)
             # Also print to console for real-time viewing
             print(result.stdout, end="")
-        
+
         print(
             f"\n{'='*80}\n"
             f"TEST EXECUTION COMPLETE\n"
@@ -153,18 +154,18 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
             f"📄 Test output saved to: {output_file}\n"
             f"{'='*80}\n"
         )
-        
+
         # Read the log file content to return
         with open(output_file, "r") as f:
             pytest_output = f.read()
-        
+
         return {
             "returncode": result.returncode,
             "success": result.returncode == 0,
             "pytest_output": pytest_output,
             "output_file": str(output_file),
         }
-    
+
     except Exception as e:
         print(
             f"\n{'='*80}\n"
@@ -173,7 +174,7 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
             f"Error: {e}\n"
             f"{'='*80}\n"
         )
-        
+
         return {
             "returncode": 1,
             "success": False,
@@ -198,20 +199,20 @@ def main(
         f"⏱️  Timeout: 1 hour\n"
         f"{'='*80}\n"
     )
-    
+
     # Run tests remotely with streaming output
     result = run_tests.remote(test_path=test_path, pytest_args=pytest_args)
-    
+
     # Save output to local file
     local_output_dir = Path("test-outputs")
     local_output_dir.mkdir(exist_ok=True)
     local_output_file = local_output_dir / "pytest-output.log"
-    
+
     if result.get("pytest_output"):
         with open(local_output_file, "w") as f:
             f.write(result["pytest_output"])
         print(f"📄 Test output saved to: {local_output_file}")
-    
+
     final_status = (
         f"\n{'='*80}\n"
         f"FINAL RESULTS\n"
@@ -219,13 +220,13 @@ def main(
         f"Return Code: {result['returncode']}\n"
         f"Success: {result['success']}\n"
     )
-    
+
     if not result["success"]:
         if "error" in result:
             final_status += f"Error: {result['error']}\n"
         final_status += f"{'='*80}\n"
         print(final_status)
         sys.exit(result["returncode"])
-    
+
     final_status += f"{'='*80}\n\n✅ All tests passed!"
     print(final_status)

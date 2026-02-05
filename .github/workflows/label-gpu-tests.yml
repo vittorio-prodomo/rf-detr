@@ -33,31 +33,31 @@ jobs:
           script: |
             const fs = require('fs');
             const path = 'test-outputs/pytest-output.log';
-            
+
             let comment = '## 🎮 GPU Test Results\n\n';
-            
+
             if (fs.existsSync(path)) {
               let output = fs.readFileSync(path, 'utf8');
-              
+
               // Strip ANSI color codes for clean display
               // eslint-disable-next-line no-control-regex
               output = output.replace(/\x1b\[[0-9;]*m/g, '');
-              
+
               const lines = output.split('\n');
-              
+
               // Extract summary line (usually at the end)
               const summaryLine = lines.filter(l => l.includes('passed') || l.includes('failed')).pop() || '';
-              
+
               // Determine status
               const hasFailures = output.includes('FAILED') || output.includes('ERROR');
               const status = hasFailures ? '❌ Tests Failed' : '✅ Tests Passed';
-              
+
               comment += `### ${status}\n\n`;
-              
+
               if (summaryLine) {
                 comment += `**Summary:** ${summaryLine.trim()}\n\n`;
               }
-              
+
               comment += '<details>\n<summary>Full Test Output</summary>\n\n```\n';
               comment += output.substring(0, 60000); // GitHub comment size limit
               if (output.length > 60000) {
@@ -67,9 +67,9 @@ jobs:
             } else {
               comment += '⚠️ Test output file not found. Check workflow logs for details.\n';
             }
-            
+
             comment += `\n**Workflow Run:** ${context.payload.repository.html_url}/actions/runs/${context.runId}`;
-            
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
