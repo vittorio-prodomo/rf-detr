@@ -184,5 +184,6 @@ train_test.py
 
 # test artifacts
 test_visualizations/
+test-outputs/
 
 debugging/

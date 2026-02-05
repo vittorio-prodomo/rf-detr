@@ -5,14 +5,21 @@ Run tests on Modal's GPU infrastructure with pytest interface similar to local e
 Usage:
     modal run .modal/test_runner.py --test-path tests/ --pytest-args "-v"
     modal run .modal/test_runner.py --test-path tests/datasets/ --pytest-args "-v -k synthetic"
+    
+Environment Variables:
+    MODAL_GPU: GPU type to use (default: L4, options: L4, T4, A10G, A100, etc.)
 """
 
 import sys
+import os
 from pathlib import Path
 import modal
 
 # Create Modal app with profile name from environment or default
 app = modal.App("rf-detr-gpu-tests")
+
+# Get GPU type from environment or default to L4
+GPU_TYPE = os.environ.get("MODAL_GPU", "L4")
 
 # Start with PyTorch public image for faster builds
 # Using PyTorch 2.8 with CUDA 12.6
@@ -59,7 +66,7 @@ image = (
 
 @app.function(
     image=image,
-    gpu="L4",  # NVIDIA L4 GPU
+    gpu=GPU_TYPE,  # GPU type from environment variable
     timeout=3600,  # Hard 1 hour timeout safety limit
 )
 def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
@@ -103,22 +110,44 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
     print(f"Working directory: {os.getcwd()}")
     print("="*80 + "\n")
     
-    # Run pytest and stream output
+    # Create output directory for pytest logs
+    output_dir = Path("/root/project/test-outputs")
+    output_dir.mkdir(exist_ok=True)
+    output_file = output_dir / "pytest-output.log"
+    
+    # Run pytest and capture output to both console and file
     try:
-        result = subprocess.run(
-            pytest_cmd,
-            cwd="/root/project",
-        )
+        with open(output_file, "w") as log_file:
+            # Run pytest with output going to both stdout and file
+            result = subprocess.run(
+                pytest_cmd,
+                cwd="/root/project",
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            
+            # Write to file
+            log_file.write(result.stdout)
+            # Also print to console for real-time viewing
+            print(result.stdout, end="")
         
         print("\n" + "="*80)
         print("TEST EXECUTION COMPLETE")
         print("="*80)
         print(f"Exit code: {result.returncode}")
+        print(f"📄 Test output saved to: {output_file}")
         print("="*80 + "\n")
+        
+        # Read the log file content to return
+        with open(output_file, "r") as f:
+            pytest_output = f.read()
         
         return {
             "returncode": result.returncode,
             "success": result.returncode == 0,
+            "pytest_output": pytest_output,
+            "output_file": str(output_file),
         }
     
     except Exception as e:
@@ -132,6 +161,7 @@ def run_tests(test_path: str = "tests/", pytest_args: str = "-v"):
             "returncode": 1,
             "success": False,
             "error": str(e),
+            "pytest_output": "",
         }
 
 
@@ -146,12 +176,22 @@ def main(
     print("="*80)
     print(f"📁 Test Path: {test_path}")
     print(f"⚙️  Pytest Args: {pytest_args}")
-    print(f"🎮 GPU: L4")
+    print(f"🎮 GPU: {GPU_TYPE}")
     print(f"⏱️  Timeout: 1 hour")
     print("="*80 + "\n")
     
     # Run tests remotely with streaming output
     result = run_tests.remote(test_path=test_path, pytest_args=pytest_args)
+    
+    # Save output to local file
+    local_output_dir = Path("test-outputs")
+    local_output_dir.mkdir(exist_ok=True)
+    local_output_file = local_output_dir / "pytest-output.log"
+    
+    if result.get("pytest_output"):
+        with open(local_output_file, "w") as f:
+            f.write(result["pytest_output"])
+        print(f"📄 Test output saved to: {local_output_file}")
     
     print("\n" + "="*80)
     print("FINAL RESULTS")

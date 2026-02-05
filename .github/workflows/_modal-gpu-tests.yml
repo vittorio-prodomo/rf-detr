@@ -38,14 +38,15 @@ jobs:
         env:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MODAL_GPU: ${{ vars.MODAL_GPU || 'L4' }}
         run: |
-          import modal
-          from modal_app import run_tests
+          modal run .modal/test_runner.py
 
-          result = run_tests.call()
-          print("STDOUT:\n", result["stdout"])
-          print("STDERR:\n", result["stderr"])
-
-          if result["returncode"] != 0:
-              raise SystemExit("Tests failed")
-        shell: python
+      - name: Upload pytest output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-output
+          path: test-outputs/pytest-output.log
+          if-no-files-found: warn
+          retention-days: 30
