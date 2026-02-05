@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 import modal
 
-# Create Modal app
+# Create Modal app with profile name from environment or default
 app = modal.App("rf-detr-gpu-tests")
 
 # Start with PyTorch public image for faster builds

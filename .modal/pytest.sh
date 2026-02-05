@@ -67,7 +67,19 @@ if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
     fi
 fi
 
+# Get profile name from environment or use default
+MODAL_PROFILE="${MODAL_PROFILE:-rf-detr}"
+
 echo -e "${GREEN}✓${NC} Modal CLI ready"
+
+# Activate Modal profile if specified
+if [ -n "$MODAL_PROFILE" ]; then
+    echo -e "${GREEN}✓${NC} Activating Modal profile: $MODAL_PROFILE"
+    python -m modal profile activate "$MODAL_PROFILE" 2>/dev/null || {
+        echo -e "${YELLOW}ℹ${NC}  Profile '$MODAL_PROFILE' not found or not configured, using current profile"
+    }
+fi
+
 echo -e "${GREEN}✓${NC} Test path: $TEST_PATH"
 echo -e "${GREEN}✓${NC} Pytest args: $PYTEST_ARGS"
 echo

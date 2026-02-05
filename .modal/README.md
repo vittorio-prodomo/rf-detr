@@ -26,6 +26,16 @@ export MODAL_TOKEN_ID=your_token_id
 export MODAL_TOKEN_SECRET=your_token_secret
 ```
 
+### 3. Configure Modal profile (optional)
+
+The wrapper script automatically activates the Modal profile specified by the `MODAL_PROFILE` environment variable (defaults to `rf-detr`).
+
+```bash
+export MODAL_PROFILE=rf-detr  # or your custom profile name
+```
+
+The script will run `modal profile activate rf-detr` before executing tests.
+
 ## Usage
 
 ### Using the convenience wrapper (recommended)
@@ -60,8 +70,6 @@ modal run .modal/test_runner.py \
     --test-path tests/ \
     --pytest-args "-v -s -k test_name"
 ```
-
-Note: The `rf-detr` profile is automatically used via the `modal.toml` configuration file.
 
 ## How It Works
 
