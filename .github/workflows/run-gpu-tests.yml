@@ -1,0 +1,26 @@
+name: Modal GPU Tests (manual)
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or commit SHA to test"
+        required: false
+        default: ""
+
+jobs:
+  call:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Call reusable workflow
+        uses: ./.github/workflows/_modal-gpu-tests.yml
+        with:
+          ref: ${{ github.event.inputs.ref || github.sha }}
+        secrets:
+            MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+            MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
