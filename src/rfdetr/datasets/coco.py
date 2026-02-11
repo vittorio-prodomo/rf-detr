@@ -36,9 +36,6 @@ logger = get_logger()
 def is_valid_coco_dataset(dataset_dir: str) -> bool:
     return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
 
-def is_valid_coco_dataset(dataset_dir: str) -> bool:
-    return (Path(dataset_dir) / "train" / "_annotations.coco.json").exists()
-
 def compute_multi_scale_scales(resolution: int, expanded_scales: bool = False, patch_size: int = 16, num_windows: int = 4) -> List[int]:
     # round to the nearest multiple of 4*patch_size to enable both patching and windowing
     base_num_patches_per_window = resolution // (patch_size * num_windows)
