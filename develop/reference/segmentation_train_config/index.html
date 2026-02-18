@@ -1935,12 +1935,14 @@
 <span class="normal"><a href="#__codelineno-0-333">333</a></span>
 <span class="normal"><a href="#__codelineno-0-334">334</a></span>
 <span class="normal"><a href="#__codelineno-0-335">335</a></span>
-<span class="normal"><a href="#__codelineno-0-336">336</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-331"><a id="__codelineno-0-331" name="__codelineno-0-331"></a><span class="k">class</span><span class="w"> </span><span class="nc">SegmentationTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
-</span><span id="__span-0-332"><a id="__codelineno-0-332" name="__codelineno-0-332"></a>    <span class="n">mask_point_sample_ratio</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span>
-</span><span id="__span-0-333"><a id="__codelineno-0-333" name="__codelineno-0-333"></a>    <span class="n">mask_ce_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
-</span><span id="__span-0-334"><a id="__codelineno-0-334" name="__codelineno-0-334"></a>    <span class="n">mask_dice_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
-</span><span id="__span-0-335"><a id="__codelineno-0-335" name="__codelineno-0-335"></a>    <span class="n">cls_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
-</span><span id="__span-0-336"><a id="__codelineno-0-336" name="__codelineno-0-336"></a>    <span class="n">segmentation_head</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="normal"><a href="#__codelineno-0-336">336</a></span>
+<span class="normal"><a href="#__codelineno-0-337">337</a></span></pre></div></td><td class="code"><div><pre><span></span><code><span id="__span-0-331"><a id="__codelineno-0-331" name="__codelineno-0-331"></a><span class="k">class</span><span class="w"> </span><span class="nc">SegmentationTrainConfig</span><span class="p">(</span><span class="n">TrainConfig</span><span class="p">):</span>
+</span><span id="__span-0-332"><a id="__codelineno-0-332" name="__codelineno-0-332"></a>    <span class="n">num_select</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+</span><span id="__span-0-333"><a id="__codelineno-0-333" name="__codelineno-0-333"></a>    <span class="n">mask_point_sample_ratio</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">16</span>
+</span><span id="__span-0-334"><a id="__codelineno-0-334" name="__codelineno-0-334"></a>    <span class="n">mask_ce_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="__span-0-335"><a id="__codelineno-0-335" name="__codelineno-0-335"></a>    <span class="n">mask_dice_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="__span-0-336"><a id="__codelineno-0-336" name="__codelineno-0-336"></a>    <span class="n">cls_loss_coef</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">5.0</span>
+</span><span id="__span-0-337"><a id="__codelineno-0-337" name="__codelineno-0-337"></a>    <span class="n">segmentation_head</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
 </span></code></pre></div></td></tr></table></div>
               </details>
 
