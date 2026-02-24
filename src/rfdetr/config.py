@@ -325,6 +325,7 @@ class TrainConfig(BaseModel):
     run_test: bool = True
     segmentation_head: bool = False
     eval_max_dets: int = 500
+    data_fraction: float = 1.0  # Fraction of training data to use (0.0–1.0)
     aug_config: Optional[Dict[str, Any]] = None
 
     @field_validator("dataset_dir", "output_dir", mode="after")

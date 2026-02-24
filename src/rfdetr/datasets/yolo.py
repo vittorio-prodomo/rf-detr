@@ -24,27 +24,64 @@ REQUIRED_SPLIT_DIRS = ["train", "valid"]
 REQUIRED_DATA_SUBDIRS = ["images", "labels"]
 
 
+def _detect_yolo_layout(dataset_dir: str):
+    """Detect whether the dataset uses YOLO-A or YOLO-B directory layout.
+
+    YOLO-A (Ultralytics standard): ``images/{split}/`` + ``labels/{split}/``
+    YOLO-B (Roboflow style):       ``{split}/images/`` + ``{split}/labels/``
+
+    Also accepts ``val`` as an alias for ``valid``.
+
+    Returns:
+        ``"yolo-a"``, ``"yolo-b"``, or ``None`` if neither layout is detected.
+    """
+    # YOLO-B: {split}/images/ + {split}/labels/
+    for val_name in ("valid", "val"):
+        splits = ["train", val_name]
+        if all(
+            os.path.exists(os.path.join(dataset_dir, s, d))
+            for s in splits
+            for d in REQUIRED_DATA_SUBDIRS
+        ):
+            return "yolo-b"
+
+    # YOLO-A: images/{split}/ + labels/{split}/
+    for val_name in ("val", "valid"):
+        splits = ["train", val_name]
+        if all(
+            os.path.exists(os.path.join(dataset_dir, d, s))
+            for d in REQUIRED_DATA_SUBDIRS
+            for s in splits
+        ):
+            return "yolo-a"
+
+    return None
+
+
+def _resolve_val_split_name(dataset_dir: str, layout: str):
+    """Return the actual validation split name on disk (``val`` or ``valid``)."""
+    if layout == "yolo-b":
+        if os.path.isdir(os.path.join(dataset_dir, "valid")):
+            return "valid"
+        return "val"
+    else:  # yolo-a
+        if os.path.isdir(os.path.join(dataset_dir, "images", "val")):
+            return "val"
+        return "valid"
+
+
 def is_valid_yolo_dataset(dataset_dir: str) -> bool:
     """
     Checks if the specified dataset directory is in yolo format.
 
-    We accept a dataset to be in yolo format if the following conditions are met:
-    - The dataset_dir contains a data.yaml file
-    - The dataset_dir contains "train" and "valid" subdirectories, each containing "images" and "labels" subdirectories
-    - The "test" subdirectory is optional
+    Supports both YOLO-A (``images/{split}/``) and YOLO-B (``{split}/images/``)
+    layouts, and accepts ``val`` as an alias for ``valid``.
 
     Returns a boolean indicating whether the dataset is in correct yolo format.
     """
     contains_required_data_yaml = os.path.exists(os.path.join(dataset_dir, REQUIRED_YOLO_YAML_FILE))
-    contains_required_split_dirs = all(
-        os.path.exists(os.path.join(dataset_dir, split_dir)) for split_dir in REQUIRED_SPLIT_DIRS
-    )
-    contains_required_data_subdirs = all(
-        os.path.exists(os.path.join(dataset_dir, split_dir, data_subdir))
-        for split_dir in REQUIRED_SPLIT_DIRS
-        for data_subdir in REQUIRED_DATA_SUBDIRS
-    )
-    return contains_required_data_yaml and contains_required_split_dirs and contains_required_data_subdirs
+    layout = _detect_yolo_layout(dataset_dir)
+    return contains_required_data_yaml and layout is not None
 
 
 class ConvertYolo:
@@ -423,7 +460,15 @@ class YoloDetection(VisionDataset):
         data_file: Path to data.yaml file containing class names and dataset info
         transforms: Optional transforms to apply to images and targets
         include_masks: Whether to load segmentation masks (for YOLO segmentation format)
+        data_fraction: Fraction of samples to use (0.0–1.0). Applied before loading
+            to avoid opening every image file. Default: 1.0 (use all).
+        seed: Random seed for reproducible subsampling. Default: 0.
     """
+
+    _IMAGE_EXTENSIONS = {
+        ".bmp", ".dng", ".jpg", ".jpeg", ".mpo",
+        ".png", ".tif", ".tiff", ".webp",
+    }
 
     def __init__(
         self,
@@ -432,25 +477,92 @@ class YoloDetection(VisionDataset):
         data_file: str,
         transforms=None,
         include_masks: bool = False,
+        data_fraction: float = 1.0,
+        seed: int = 0,
     ):
         super(YoloDetection, self).__init__(img_folder)
         self._transforms = transforms
         self.include_masks = include_masks
         self.prepare = ConvertYolo(include_masks=include_masks)
 
-        # Load dataset using supervision's from_yolo method
-        self.sv_dataset = sv.DetectionDataset.from_yolo(
-            images_directory_path=img_folder,
-            annotations_directory_path=lb_folder,
-            data_yaml_path=data_file,
-            force_masks=include_masks,
-        )
+        if data_fraction < 1.0:
+            self.sv_dataset = self._load_fraction(
+                img_folder, lb_folder, data_file,
+                include_masks, data_fraction, seed,
+            )
+        else:
+            # Load dataset using supervision's from_yolo method
+            self.sv_dataset = sv.DetectionDataset.from_yolo(
+                images_directory_path=img_folder,
+                annotations_directory_path=lb_folder,
+                data_yaml_path=data_file,
+                force_masks=include_masks,
+            )
 
         self.classes = self.sv_dataset.classes
         self.ids = list(range(len(self.sv_dataset)))
 
         # Create COCO-compatible API for evaluation
         self.coco = CocoLikeAPI(self.classes, self.sv_dataset)
+
+    def _load_fraction(self, img_folder, lb_folder, data_file,
+                       include_masks, fraction, seed):
+        """Load only a fraction of the dataset to avoid slow full scans."""
+        import random as _random
+        import yaml
+
+        # Read class names from data.yaml
+        with open(data_file, "r") as f:
+            data = yaml.safe_load(f)
+        if isinstance(data["names"], dict):
+            classes = [data["names"][i] for i in sorted(data["names"].keys())]
+        else:
+            classes = data["names"]
+
+        # List image files
+        img_dir = Path(img_folder)
+        all_images = sorted([
+            p for p in img_dir.iterdir()
+            if p.suffix.lower() in self._IMAGE_EXTENSIONS
+        ])
+
+        # Subsample
+        n_subset = max(1, int(len(all_images) * fraction))
+        rng = _random.Random(seed)
+        subset_images = sorted(rng.sample(all_images, n_subset))
+
+        # Parse only the subset annotations (mirrors supervision's logic)
+        from supervision.dataset.formats.yolo import (
+            yolo_annotations_to_detections,
+            _with_mask,
+        )
+        from supervision.utils.file import read_txt_file
+
+        image_paths = []
+        annotations = {}
+        for img_path in subset_images:
+            img_str = str(img_path)
+            label_path = os.path.join(lb_folder, f"{img_path.stem}.txt")
+            if not os.path.exists(label_path):
+                image_paths.append(img_str)
+                annotations[img_str] = sv.Detections.empty()
+                continue
+
+            image = Image.open(img_path)
+            w, h = image.size
+            lines = read_txt_file(file_path=label_path, skip_empty=True)
+            with_masks = _with_mask(lines=lines)
+            with_masks = include_masks if include_masks else with_masks
+            det = yolo_annotations_to_detections(
+                lines=lines, resolution_wh=(w, h),
+                with_masks=with_masks, is_obb=False,
+            )
+            image_paths.append(img_str)
+            annotations[img_str] = det
+
+        return sv.DetectionDataset(
+            classes=classes, images=image_paths, annotations=annotations
+        )
 
     def __len__(self) -> int:
         return len(self.sv_dataset)
@@ -475,18 +587,29 @@ class YoloDetection(VisionDataset):
 def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> YoloDetection:
     """Build a Roboflow YOLO-format dataset.
 
-    This uses Roboflow's standard YOLO directory structure
-    (train/valid/test folders with images/ and labels/ subdirectories).
+    Supports both YOLO-A (``images/{split}/``) and YOLO-B (``{split}/images/``)
+    directory layouts, and accepts ``val`` as an alias for ``valid``.
     """
     root = Path(args.dataset_dir)
     assert root.exists(), f"provided Roboflow path {root} does not exist"
 
-    # YOLO format uses images/ and labels/ subdirectories
-    PATHS = {
-        "train": (root / "train" / "images", root / "train" / "labels"),
-        "val": (root / "valid" / "images", root / "valid" / "labels"),
-        "test": (root / "test" / "images", root / "test" / "labels"),
-    }
+    layout = _detect_yolo_layout(str(root))
+    val_name = _resolve_val_split_name(str(root), layout) if layout else "valid"
+
+    if layout == "yolo-a":
+        # YOLO-A: images/{split}/ + labels/{split}/
+        PATHS = {
+            "train": (root / "images" / "train", root / "labels" / "train"),
+            "val": (root / "images" / val_name, root / "labels" / val_name),
+            "test": (root / "images" / "test", root / "labels" / "test"),
+        }
+    else:
+        # YOLO-B (default): {split}/images/ + {split}/labels/
+        PATHS = {
+            "train": (root / "train" / "images", root / "train" / "labels"),
+            "val": (root / val_name / "images", root / val_name / "labels"),
+            "test": (root / "test" / "images", root / "test" / "labels"),
+        }
 
     data_file = root / "data.yaml"
     img_folder, lb_folder = PATHS[image_set.split("_")[0]]
@@ -497,6 +620,11 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
     do_random_resize_via_padding = getattr(args, "do_random_resize_via_padding", False)
     patch_size = getattr(args, "patch_size", None)
     num_windows = getattr(args, "num_windows", None)
+
+    # Only subsample the training split
+    data_fraction = getattr(args, "data_fraction", 1.0)
+    fraction_for_split = data_fraction if image_set == "train" else 1.0
+    seed = getattr(args, "seed", 0)
 
     if square_resize_div_64:
         dataset = YoloDetection(
@@ -513,6 +641,8 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 num_windows=num_windows,
             ),
             include_masks=include_masks,
+            data_fraction=fraction_for_split,
+            seed=seed,
         )
     else:
         dataset = YoloDetection(
@@ -529,5 +659,7 @@ def build_roboflow_from_yolo(image_set: str, args: Any, resolution: int) -> Yolo
                 num_windows=num_windows,
             ),
             include_masks=include_masks,
+            data_fraction=fraction_for_split,
+            seed=seed,
         )
     return dataset

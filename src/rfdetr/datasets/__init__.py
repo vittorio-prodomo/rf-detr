@@ -22,7 +22,7 @@ import torchvision
 
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
 from rfdetr.datasets.o365 import build_o365
-from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo
+from rfdetr.datasets.yolo import YoloDetection, build_roboflow_from_yolo, is_valid_yolo_dataset
 
 
 def get_coco_api_from_dataset(dataset: torch.utils.data.Dataset) -> Optional[Any]:
@@ -53,17 +53,14 @@ def detect_roboflow_format(dataset_dir: Path) -> str:
     if coco_annotation.exists():
         return "coco"
 
-    # Check for YOLO format: look for data.yaml or data.yml and train/images folder
-    yolo_data_file_yaml = dataset_dir / "data.yaml"
-    yolo_data_file_yml = dataset_dir / "data.yml"
-    yolo_images_dir = dataset_dir / "train" / "images"
-    if (yolo_data_file_yaml.exists() or yolo_data_file_yml.exists()) and yolo_images_dir.exists():
+    # Check for YOLO format: supports both YOLO-A (images/train/) and YOLO-B (train/images/)
+    if is_valid_yolo_dataset(str(dataset_dir)):
         return "yolo"
 
     raise ValueError(
         f"Could not detect dataset format in {dataset_dir}. "
         f"Expected either COCO format (train/_annotations.coco.json) "
-        f"or YOLO format (data.yaml or data.yml + train/images/)"
+        f"or YOLO format (data.yaml + train/images/ or images/train/)"
     )
 
 
