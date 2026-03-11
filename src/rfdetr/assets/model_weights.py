@@ -272,9 +272,13 @@ def download_pretrain_weights(
     pretrain_weights: str,
     redownload: bool = False,
     validate_md5: bool = True,
-) -> None:
+) -> str:
     """
     Download pretrained weights with optional MD5 validation.
+
+    Bare filenames (e.g. ``"rf-detr-base.pth"``) are resolved into the
+    rfdetr cache directory (see :mod:`rfdetr.cache`).  Paths that already
+    contain a directory component are used as-is.
 
     Download Priority Order:
         The function searches for models in the following order, stopping at the first match:
@@ -299,21 +303,31 @@ def download_pretrain_weights(
         redownload: Force re-download even if file exists
         validate_md5: Whether to validate MD5 hash of downloaded file
 
+    Returns:
+        Resolved absolute path to the weights file.
+
     Example:
         >>> download_pretrain_weights('rf-detr-base.pth')  # doctest: +SKIP
         Downloading pretrained weights for rf-detr-base.pth
     """
+    from rfdetr.cache import resolve_weight_path
+
+    # Resolve bare filename (e.g. "rf-detr-seg-nano.pt") into the cache dir.
+    filepath = resolve_weight_path(pretrain_weights)
+    # Use the bare filename for asset lookups.
+    filename = os.path.basename(pretrain_weights)
+
     asset: Optional[ModelWeightAsset] = None
 
     # First, check local ModelWeights - rf-detr works standalone
-    asset = ModelWeights.from_filename(pretrain_weights)
+    asset = ModelWeights.from_filename(filename)
 
     # Only try rf-detr-plus if not found locally (lazy import)
     if asset is None:
         try:
             from rfdetr_plus.assets import ModelWeights as PlusModelWeights
 
-            asset = PlusModelWeights.from_filename(pretrain_weights)
+            asset = PlusModelWeights.from_filename(filename)
         except (ImportError, AttributeError):
             # Package not installed or doesn't have assets module yet
             pass
@@ -327,33 +341,34 @@ def download_pretrain_weights(
         try:
             from rfdetr.platform.platform_downloads import PLATFORM_MODELS
 
-            if pretrain_weights not in PLATFORM_MODELS:
-                return
+            if filename not in PLATFORM_MODELS:
+                return filepath
 
-            url = PLATFORM_MODELS[pretrain_weights]
+            url = PLATFORM_MODELS[filename]
             expected_md5 = None  # Platform models don't have MD5 hashes yet
         except (ImportError, KeyError):
-            return
+            return filepath
 
     # Check if file exists with correct hash
-    if os.path.exists(pretrain_weights) and not redownload:
+    if os.path.exists(filepath) and not redownload:
         if expected_md5 and validate_md5:
-            if not _validate_file_md5(pretrain_weights, expected_md5):
+            if not _validate_file_md5(filepath, expected_md5):
                 logger.warning(
-                    f"Existing file {pretrain_weights} has incorrect MD5 hash. Re-downloading..."
+                    f"Existing file {filepath} has incorrect MD5 hash. Re-downloading..."
                 )
             else:
-                logger.info(f"File {pretrain_weights} already exists with correct MD5 hash.")
-                return
+                logger.info(f"File {filepath} already exists with correct MD5 hash.")
+                return filepath
         else:
-            return
+            return filepath
 
-    logger.info(f"Downloading pretrained weights for {pretrain_weights}")
+    logger.info(f"Downloading pretrained weights for {filename}")
     _download_file(
         url=url,
-        filename=pretrain_weights,
+        filename=filepath,
         expected_md5=expected_md5,
     )
+    return filepath
 
 
 def validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bool:
@@ -371,6 +386,10 @@ def validate_pretrain_weights(pretrain_weights: str, strict: bool = False) -> bo
         ValueError: If strict=True and validation fails
         FileNotFoundError: If strict=True and file doesn't exist
     """
+    from rfdetr.cache import resolve_weight_path
+
+    pretrain_weights = resolve_weight_path(pretrain_weights)
+
     if not os.path.exists(pretrain_weights):
         if strict:
             raise FileNotFoundError(f"Pretrained weights file not found: {pretrain_weights}")

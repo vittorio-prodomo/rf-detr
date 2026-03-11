@@ -74,17 +74,21 @@ class Model:
         if args.pretrain_weights is not None:
             logger.info("Loading pretrain weights")
 
+            # Resolve bare filename to cache directory
+            from rfdetr.cache import resolve_weight_path
+            weights_path = resolve_weight_path(args.pretrain_weights)
+
             # Validate MD5 hash before loading (non-strict, just warns)
-            validate_pretrain_weights(args.pretrain_weights, strict=False)
+            validate_pretrain_weights(weights_path, strict=False)
 
             try:
-                checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
+                checkpoint = torch.load(weights_path, map_location='cpu', weights_only=False)
             except Exception as e:
                 logger.error(f"Failed to load pretrain weights: {e}")
                 # re-download weights if they are corrupted
                 logger.info("Failed to load pretrain weights, re-downloading")
-                download_pretrain_weights(args.pretrain_weights, redownload=True)
-                checkpoint = torch.load(args.pretrain_weights, map_location='cpu', weights_only=False)
+                download_pretrain_weights(weights_path, redownload=True)
+                checkpoint = torch.load(weights_path, map_location='cpu', weights_only=False)
 
             # Extract class_names from checkpoint if available
             if 'args' in checkpoint and hasattr(checkpoint['args'], 'class_names'):

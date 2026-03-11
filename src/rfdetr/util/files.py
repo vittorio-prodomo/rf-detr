@@ -72,6 +72,11 @@ def _download_file(url: str, filename: str, expected_md5: Optional[str] = None) 
             logger.warning(f"File {filename} exists but MD5 hash mismatch. Re-downloading...")
             os.remove(filename)
 
+    # Ensure parent directory exists (for cache-based storage)
+    parent = os.path.dirname(filename)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
     response = requests.get(url, stream=True)
     response.raise_for_status()
     total_size_header = response.headers.get("content-length")

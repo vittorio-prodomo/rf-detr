@@ -11,6 +11,8 @@ from typing import List, Literal, Optional
 import torch
 from pydantic import BaseModel, field_validator
 
+from rfdetr.cache import resolve_weight_path
+
 DEVICE = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 class ModelConfig(BaseModel):
@@ -45,13 +47,15 @@ class ModelConfig(BaseModel):
     @field_validator("pretrain_weights", mode="after")
     @classmethod
     def expand_path(cls, v: Optional[str]) -> Optional[str]:
-        """
-        Expand user paths (e.g., '~' or paths with separators) but leave simple filenames
-        (like 'rf-detr-base.pth') unchanged so they can match hosted model keys.
+        """Resolve weight paths into the rfdetr cache directory.
+
+        Bare filenames (e.g. ``"rf-detr-base.pth"``) are placed inside
+        :func:`rfdetr.cache.get_cache_dir`.  Paths with directory
+        components are expanded in place.
         """
         if v is None:
             return v
-        return os.path.realpath(os.path.expanduser(v))
+        return resolve_weight_path(v)
 
 
 class RFDETRBaseConfig(ModelConfig):

@@ -9,6 +9,8 @@ import os
 if os.environ.get("PYTORCH_ENABLE_MPS_FALLBACK") is None:
     os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
+from rfdetr.cache import get_cache_dir, set_cache_dir  # noqa: F401 — public API
+
 from rfdetr.detr import (
     RFDETRBase,
     RFDETRLarge,
@@ -36,6 +38,8 @@ __all__ = [
     "RFDETRSegLarge",
     "RFDETRSegXLarge",
     "RFDETRSeg2XLarge",
+    "get_cache_dir",
+    "set_cache_dir",
 ]
 
 def __getattr__(name: str):
