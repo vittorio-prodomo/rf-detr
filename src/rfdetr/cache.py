@@ -7,8 +7,8 @@
 """
 Centralized cache directory for downloaded model weights.
 
-By default, weights are stored in ``~/.cache/roboflow/rfdetr/``.
-Override with :func:`set_cache_dir` or the ``RFDETR_CACHE_DIR``
+By default, weights are stored in ``~/.cache/roboflow/``.
+Override with :func:`set_cache_dir` or the ``ROBOFLOW_CACHE_DIR``
 environment variable.
 
 Usage::
@@ -16,7 +16,7 @@ Usage::
     from rfdetr.cache import get_cache_dir, set_cache_dir, resolve_weight_path
 
     # Query the current cache directory
-    print(get_cache_dir())  # ~/.cache/roboflow/rfdetr
+    print(get_cache_dir())  # ~/.cache/roboflow
 
     # Override programmatically
     set_cache_dir("/my/custom/path")
@@ -29,7 +29,7 @@ Usage::
 import os
 from pathlib import Path
 
-_DEFAULT_CACHE_DIR = Path.home() / ".cache" / "roboflow" / "rfdetr"
+_DEFAULT_CACHE_DIR = Path.home() / ".cache" / "roboflow"
 _cache_dir: Path | None = None
 
 
@@ -39,12 +39,12 @@ def get_cache_dir() -> Path:
     Resolution order:
 
     1. Value set via :func:`set_cache_dir` (highest priority)
-    2. ``RFDETR_CACHE_DIR`` environment variable
-    3. ``~/.cache/roboflow/rfdetr/`` (default)
+    2. ``ROBOFLOW_CACHE_DIR`` environment variable
+    3. ``~/.cache/roboflow/`` (default)
     """
     if _cache_dir is not None:
         return _cache_dir
-    env = os.environ.get("RFDETR_CACHE_DIR")
+    env = os.environ.get("ROBOFLOW_CACHE_DIR")
     if env:
         return Path(env).expanduser().resolve()
     return _DEFAULT_CACHE_DIR
@@ -72,7 +72,7 @@ def resolve_weight_path(filename: str) -> str:
 
     Returns:
         Absolute path string, e.g.
-        ``"/home/user/.cache/roboflow/rfdetr/rf-detr-seg-nano.pt"``.
+        ``"/home/user/.cache/roboflow/rf-detr-seg-nano.pt"``.
     """
     expanded = os.path.expanduser(filename)
     # If the user supplied a path with directory components, respect it.
