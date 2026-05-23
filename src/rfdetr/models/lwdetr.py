@@ -307,7 +307,8 @@ class SetCriterion(nn.Module):
                 use_varifocal_loss=False,
                 use_position_supervised_loss=False,
                 ia_bce_loss=False,
-                mask_point_sample_ratio: int = 16,):
+                mask_point_sample_ratio: int = 16,
+                masked_loss: bool = False,):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -316,6 +317,10 @@ class SetCriterion(nn.Module):
             losses: list of all the losses to be applied. See get_loss for list of available losses.
             focal_alpha: alpha in Focal Loss
             group_detr: Number of groups to speed detr training. Default is 1.
+            masked_loss: when True, the classification loss honors a per-sample
+                ``class_mask`` field on each target dict. Channels where the mask
+                is 0 contribute zero gradient — useful when an image's source
+                does not annotate every class. Default False = original behaviour.
         """
         super().__init__()
         self.num_classes = num_classes
@@ -329,6 +334,40 @@ class SetCriterion(nn.Module):
         self.use_position_supervised_loss = use_position_supervised_loss
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
+        self.masked_loss = masked_loss
+        if masked_loss and (use_varifocal_loss or use_position_supervised_loss):
+            raise NotImplementedError(
+                "masked_loss=True is currently implemented for the ia_bce_loss "
+                "and default sigmoid_focal_loss branches only. The "
+                "use_varifocal_loss and use_position_supervised_loss paths "
+                "would need their own loss-element masking before reduction."
+            )
+
+    def _build_class_mask(self, targets, src_logits):
+        """Stack per-sample ``class_mask`` tensors into a broadcastable mask.
+
+        Each target dict may carry a 1D ``class_mask`` tensor of length
+        ``num_real_classes`` (i.e. ``args.num_classes``, excluding the
+        extra no-object channel that lives at the last position of
+        ``src_logits``). Samples without a ``class_mask`` default to
+        all-ones — every class is active for them.
+
+        The returned tensor has shape ``(B, 1, src_logits.shape[2])`` so it
+        broadcasts cleanly against ``(B, num_queries, num_classes)`` weight /
+        loss tensors. The trailing no-object channel is always set to 1 so
+        that the existing no-object handling is never masked away.
+        """
+        B = src_logits.shape[0]
+        C = src_logits.shape[2]
+        mask = torch.ones(B, C, device=src_logits.device, dtype=src_logits.dtype)
+        for b, t in enumerate(targets):
+            cm = t.get("class_mask", None)
+            if cm is None:
+                continue
+            cm = cm.to(device=src_logits.device, dtype=src_logits.dtype)
+            n = min(cm.shape[0], C)
+            mask[b, :n] = cm[:n]
+        return mask.unsqueeze(1)
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -363,6 +402,10 @@ class SetCriterion(nn.Module):
 
             pos_weights[pos_ind] = t.to(pos_weights.dtype)
             neg_weights[pos_ind] = 1 - t.to(neg_weights.dtype)
+            if self.masked_loss:
+                class_mask = self._build_class_mask(targets, src_logits)
+                pos_weights = pos_weights * class_mask
+                neg_weights = neg_weights * class_mask
             # a reformulation of the standard loss_ce = - pos_weights * prob.log() - neg_weights * (1 - prob).log()
             # with a focus on statistical stability by using fused logsigmoid
             loss_ce = neg_weights * src_logits - F.logsigmoid(src_logits) * (pos_weights + neg_weights)
@@ -415,7 +458,14 @@ class SetCriterion(nn.Module):
             target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
 
             target_classes_onehot = target_classes_onehot[:,:,:-1]
-            loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
+            if self.masked_loss:
+                class_mask = self._build_class_mask(targets, src_logits)
+                loss_ce = sigmoid_focal_loss_masked(
+                    src_logits, target_classes_onehot, class_mask, num_boxes,
+                    alpha=self.focal_alpha, gamma=2,
+                ) * src_logits.shape[1]
+            else:
+                loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
         losses = {'loss_ce': loss_ce}
 
         if log:
@@ -653,6 +703,28 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
     return loss.mean(1).sum() / num_boxes
 
 
+def sigmoid_focal_loss_masked(inputs, targets, class_mask, num_boxes,
+                              alpha: float = 0.25, gamma: float = 2):
+    """Masked variant of :func:`sigmoid_focal_loss`.
+
+    Identical to ``sigmoid_focal_loss`` except that the per-element loss is
+    multiplied by ``class_mask`` (broadcast-compatible with ``inputs``) before
+    the final reduction. Loss contributions from (sample, class) cells where
+    the mask is 0 are zeroed out — these classes do not contribute gradient.
+    """
+    prob = inputs.sigmoid()
+    ce_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduction="none")
+    p_t = prob * targets + (1 - prob) * (1 - targets)
+    loss = ce_loss * ((1 - p_t) ** gamma)
+
+    if alpha >= 0:
+        alpha_t = alpha * targets + (1 - alpha) * (1 - targets)
+        loss = alpha_t * loss
+
+    loss = loss * class_mask
+    return loss.mean(1).sum() / num_boxes
+
+
 def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
     prob = inputs.sigmoid()
     focal_weight = targets * (targets > 0.0).float() + \
@@ -877,6 +949,7 @@ def build_criterion_and_postprocessors(args):
         losses.append('masks')
 
     sum_group_losses = getattr(args, 'sum_group_losses', False)
+    masked_loss = getattr(args, 'masked_loss', False)
     if args.segmentation_head:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
                                 focal_alpha=args.focal_alpha, losses=losses,
@@ -884,14 +957,16 @@ def build_criterion_and_postprocessors(args):
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
                                 ia_bce_loss=args.ia_bce_loss,
-                                mask_point_sample_ratio=args.mask_point_sample_ratio)
+                                mask_point_sample_ratio=args.mask_point_sample_ratio,
+                                masked_loss=masked_loss)
     else:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
                                 focal_alpha=args.focal_alpha, losses=losses,
                                 group_detr=args.group_detr, sum_group_losses=sum_group_losses,
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
-                                ia_bce_loss=args.ia_bce_loss)
+                                ia_bce_loss=args.ia_bce_loss,
+                                masked_loss=masked_loss)
     criterion.to(device)
     postprocess = PostProcess(num_select=args.num_select)
 
