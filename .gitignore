@@ -189,3 +189,9 @@ test_visualizations/
 data/
 
 debugging/
+
+# Claude Code personal config (per-machine, never team-shared)
+.claude/settings.local.json
+
+# uv lockfile — match upstream (they do not commit it); avoids fork divergence
+uv.lock
