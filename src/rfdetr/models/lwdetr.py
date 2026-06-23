@@ -1037,6 +1037,8 @@ def build_criterion_and_postprocessors(args):
 
     sum_group_losses = getattr(args, 'sum_group_losses', False)
     masked_loss = getattr(args, 'masked_loss', False)
+    size_band_ignore = getattr(args, 'size_band_ignore', False)
+    ignore_ioa_thresh = getattr(args, 'ignore_ioa_thresh', 0.5)
     if args.segmentation_head:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
                                 focal_alpha=args.focal_alpha, losses=losses,
@@ -1045,7 +1047,9 @@ def build_criterion_and_postprocessors(args):
                                 use_position_supervised_loss=args.use_position_supervised_loss,
                                 ia_bce_loss=args.ia_bce_loss,
                                 mask_point_sample_ratio=args.mask_point_sample_ratio,
-                                masked_loss=masked_loss)
+                                masked_loss=masked_loss,
+                                size_band_ignore=size_band_ignore,
+                                ignore_ioa_thresh=ignore_ioa_thresh)
     else:
         criterion = SetCriterion(args.num_classes + 1, matcher=matcher, weight_dict=weight_dict,
                                 focal_alpha=args.focal_alpha, losses=losses,
@@ -1053,7 +1057,9 @@ def build_criterion_and_postprocessors(args):
                                 use_varifocal_loss = args.use_varifocal_loss,
                                 use_position_supervised_loss=args.use_position_supervised_loss,
                                 ia_bce_loss=args.ia_bce_loss,
-                                masked_loss=masked_loss)
+                                masked_loss=masked_loss,
+                                size_band_ignore=size_band_ignore,
+                                ignore_ioa_thresh=ignore_ioa_thresh)
     criterion.to(device)
     postprocess = PostProcess(num_select=args.num_select)
 
