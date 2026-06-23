@@ -741,6 +741,41 @@ def box_ioa(boxes_a, boxes_b):
     return inter / area_a[:, None].clamp(min=1e-6)
 
 
+def split_ignore_targets(targets):
+    """Partition each target into real (ignore==False) instances + ignore boxes.
+
+    Returns a new list of target dicts with ``labels``/``boxes``/``masks``
+    filtered to the real instances (so the matcher and per-pair losses never see
+    ignore GTs), the ``ignore`` key dropped, all other keys (e.g. ``class_mask``)
+    passed through, and the removed instances' boxes stashed under
+    ``_ignore_boxes`` (for the no-object drop). Targets lacking an ``ignore`` key
+    pass through unchanged with an empty ``_ignore_boxes``.
+    """
+    per_instance_keys = ("labels", "boxes", "masks")
+    out = []
+    for t in targets:
+        ign = t.get("ignore", None)
+        if ign is None or ign.numel() == 0:
+            rt = {k: v for k, v in t.items() if k != "ignore"}
+            rt["_ignore_boxes"] = t["boxes"][:0]
+            out.append(rt)
+            continue
+        ign = ign.bool()
+        keep = ~ign
+        rt = {}
+        for k, v in t.items():
+            if k == "ignore":
+                continue
+            if (k in per_instance_keys and torch.is_tensor(v)
+                    and v.shape[0] == ign.shape[0]):
+                rt[k] = v[keep]
+            else:
+                rt[k] = v
+        rt["_ignore_boxes"] = t["boxes"][ign]
+        out.append(rt)
+    return out
+
+
 def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
     prob = inputs.sigmoid()
     focal_weight = targets * (targets > 0.0).float() + \
