@@ -776,6 +776,30 @@ def split_ignore_targets(targets):
     return out
 
 
+def unmatched_ignore_overlap(pred_boxes, targets, indices, thresh):
+    """(B, Q) bool mask: True where a query is UNMATCHED and its predicted box
+    overlaps an ignore region by IoA > ``thresh``. Such queries are dropped from
+    the no-object loss (an ignore region must teach neither foreground nor
+    background). ``pred_boxes`` is (B, Q, 4) cxcywh; ``targets[b]['_ignore_boxes']``
+    is (n, 4) cxcywh.
+    """
+    B, Q = pred_boxes.shape[:2]
+    drop = torch.zeros(B, Q, dtype=torch.bool, device=pred_boxes.device)
+    for b, t in enumerate(targets):
+        ign = t.get("_ignore_boxes", None)
+        if ign is None or ign.shape[0] == 0:
+            continue
+        pred_xyxy = box_ops.box_cxcywh_to_xyxy(pred_boxes[b])           # (Q, 4)
+        ign_xyxy = box_ops.box_cxcywh_to_xyxy(ign.to(pred_boxes.device))
+        overlap = (box_ioa(pred_xyxy, ign_xyxy) > thresh).any(dim=1)    # (Q,)
+        unmatched = torch.ones(Q, dtype=torch.bool, device=pred_boxes.device)
+        matched_q = indices[b][0].to(pred_boxes.device)
+        if matched_q.numel() > 0:
+            unmatched[matched_q] = False
+        drop[b] = overlap & unmatched
+    return drop
+
+
 def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
     prob = inputs.sigmoid()
     focal_weight = targets * (targets > 0.0).float() + \
