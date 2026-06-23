@@ -308,7 +308,9 @@ class SetCriterion(nn.Module):
                 use_position_supervised_loss=False,
                 ia_bce_loss=False,
                 mask_point_sample_ratio: int = 16,
-                masked_loss: bool = False,):
+                masked_loss: bool = False,
+                size_band_ignore: bool = False,
+                ignore_ioa_thresh: float = 0.5,):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -335,10 +337,12 @@ class SetCriterion(nn.Module):
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.masked_loss = masked_loss
-        if masked_loss and (use_varifocal_loss or use_position_supervised_loss):
+        self.size_band_ignore = size_band_ignore
+        self.ignore_ioa_thresh = ignore_ioa_thresh
+        if (masked_loss or size_band_ignore) and (use_varifocal_loss or use_position_supervised_loss):
             raise NotImplementedError(
-                "masked_loss=True is currently implemented for the ia_bce_loss "
-                "and default sigmoid_focal_loss branches only. The "
+                "masked_loss / size_band_ignore are implemented for the "
+                "ia_bce_loss and default sigmoid_focal_loss branches only. The "
                 "use_varifocal_loss and use_position_supervised_loss paths "
                 "would need their own loss-element masking before reduction."
             )
@@ -406,6 +410,11 @@ class SetCriterion(nn.Module):
                 class_mask = self._build_class_mask(targets, src_logits)
                 pos_weights = pos_weights * class_mask
                 neg_weights = neg_weights * class_mask
+            if self.size_band_ignore:
+                drop = unmatched_ignore_overlap(
+                    outputs['pred_boxes'], targets, indices, self.ignore_ioa_thresh,
+                )  # (B, Q) bool
+                neg_weights = neg_weights * (~drop).unsqueeze(-1).to(neg_weights.dtype)
             # a reformulation of the standard loss_ce = - pos_weights * prob.log() - neg_weights * (1 - prob).log()
             # with a focus on statistical stability by using fused logsigmoid
             loss_ce = neg_weights * src_logits - F.logsigmoid(src_logits) * (pos_weights + neg_weights)
@@ -628,6 +637,8 @@ class SetCriterion(nn.Module):
                       The expected keys in each dict depends on the losses applied, see each loss' doc
         """
         group_detr = self.group_detr if self.training else 1
+        if self.size_band_ignore:
+            targets = split_ignore_targets(targets)
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
         # Retrieve the matching between the outputs of the last layer and the targets
