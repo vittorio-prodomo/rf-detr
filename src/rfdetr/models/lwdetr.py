@@ -768,7 +768,8 @@ def split_ignore_targets(targets):
         ign = t.get("ignore", None)
         if ign is None or ign.numel() == 0:
             rt = {k: v for k, v in t.items() if k != "ignore"}
-            rt["_ignore_boxes"] = t["boxes"][:0]
+            boxes = t.get("boxes")
+            rt["_ignore_boxes"] = boxes[:0] if boxes is not None else torch.zeros((0, 4))
             out.append(rt)
             continue
         ign = ign.bool()
