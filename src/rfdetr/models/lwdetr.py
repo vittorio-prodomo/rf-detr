@@ -725,6 +725,22 @@ def sigmoid_focal_loss_masked(inputs, targets, class_mask, num_boxes,
     return loss.mean(1).sum() / num_boxes
 
 
+def box_ioa(boxes_a, boxes_b):
+    """Intersection-over-area: IoA[i, j] = area(a_i ∩ b_j) / area(a_i).
+
+    'How much of box a_i lies inside box b_j.' Boxes are xyxy (any consistent
+    units). Used to decide whether a predicted query box lies mostly inside an
+    ignore region. Returns (Na, Nb).
+    """
+    area_a = ((boxes_a[:, 2] - boxes_a[:, 0]).clamp(min=0)
+              * (boxes_a[:, 3] - boxes_a[:, 1]).clamp(min=0))         # (Na,)
+    lt = torch.max(boxes_a[:, None, :2], boxes_b[None, :, :2])         # (Na, Nb, 2)
+    rb = torch.min(boxes_a[:, None, 2:], boxes_b[None, :, 2:])
+    wh = (rb - lt).clamp(min=0)
+    inter = wh[..., 0] * wh[..., 1]                                    # (Na, Nb)
+    return inter / area_a[:, None].clamp(min=1e-6)
+
+
 def sigmoid_varifocal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
     prob = inputs.sigmoid()
     focal_weight = targets * (targets > 0.0).float() + \
