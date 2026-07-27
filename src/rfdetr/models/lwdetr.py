@@ -887,11 +887,168 @@ sigmoid_ce_loss_jit = torch.jit.script(
 )  # type: torch.jit.ScriptModule
 
 
+#: Attribute names used by the pre-consolidation monkey-patch of this class.
+#: Mapped to their supported replacements -- see ``PostProcess.__setattr__``.
+_LEGACY_POSTPROCESS_ATTRS = {
+    "_score_threshold": "score_threshold",
+    "_per_class_threshold": "per_class_threshold",
+    "_target_class_ids": "target_class_ids",
+    "_nms_iou": "nms_iou",
+}
+
+
 class PostProcess(nn.Module):
-    """ This module converts the model's output into the format expected by the coco api"""
-    def __init__(self, num_select=300) -> None:
+    """Converts the model's output into the format expected by the coco api.
+
+    Beyond the stock top-K decode, this supports **inference-time filtering
+    applied BEFORE masks are decoded**, plus an independent mask resolution.
+
+    WHY THE FILTERS LIVE HERE. The stock path decodes masks (an
+    ``F.interpolate`` per query) for all ``num_select`` (=300) queries and
+    leaves the caller to throw most of them away. On segmentation workloads
+    with over-firing classes that interpolate dominates wall-clock -- measured
+    at roughly a 13x slowdown versus filtering first. Filtering cannot be done
+    by the caller, because by the time it sees the result the masks are
+    already decoded. This capability previously lived as a monkey-patch of
+    ``PostProcess.forward``, copied verbatim into three separate call sites;
+    it is consolidated here so there is one implementation and one place to
+    fix it.
+
+    WHY ``mask_size`` IS SEPARATE FROM ``target_sizes``. The stock code uses
+    ``target_sizes`` for two unrelated jobs: rescaling boxes into the original
+    image frame, and choosing the resolution masks are interpolated to. Those
+    are independent choices. Evaluating masks at the segmentation head's own
+    output resolution -- rather than upsampling to full size and immediately
+    downsampling again -- is both cheaper and more faithful, since the
+    round-trip resamples every boundary twice (bilinear up, then whatever the
+    caller uses coming back down). Boxes still need the true image frame, so
+    the two must be settable independently.
+
+    Attributes (all optional; every one defaults to stock behaviour):
+        score_threshold: scalar floor on the sigmoid score. ``None`` keeps
+            every top-K query, which is what the stock decode does.
+        per_class_threshold: ``{class_idx: threshold}`` overriding
+            ``score_threshold`` per class. Keyed in the same 0-based class-index
+            space this module emits in ``labels``.
+        target_class_ids: iterable of class indices to keep. Queries predicting
+            any other class are dropped before masks are decoded.
+        nms_iou: IoU threshold for class-aware box NMS over the survivors.
+            ``None`` disables it. Requires torchvision.
+        mask_size: resolution masks are interpolated to. ``None`` = the stock
+            behaviour (``target_sizes``, i.e. the box frame). ``"native"``
+            skips the interpolation entirely, keeping the head's own output
+            resolution. An explicit ``(h, w)`` interpolates to that size.
+    """
+
+    #: Capability marker for consumers that may be running against either this
+    #: build or an older vendored copy (the handoff bundles pin rf-detr by
+    #: commit). Setting ``target_class_ids`` on a pre-consolidation PostProcess
+    #: succeeds silently and does nothing -- restoring the unfiltered decode --
+    #: so a consumer that needs the filters should assert this flag rather than
+    #: assume it. ``hasattr(PostProcess, "SUPPORTS_INFERENCE_FILTERS")`` is the
+    #: check; the instance attributes are not usable for feature detection.
+    SUPPORTS_INFERENCE_FILTERS = True
+
+    #: Set so that any surviving copy of the old monkey-patch installer -- each
+    #: of which guards on ``if getattr(PostProcess, "_bridge_patched", False):
+    #: return`` -- becomes a no-op instead of silently replacing ``forward``
+    #: and reverting this class to the pre-consolidation implementation.
+    _bridge_patched = True
+
+    def __init__(
+        self,
+        num_select=300,
+        *,
+        score_threshold=None,
+        per_class_threshold=None,
+        target_class_ids=None,
+        nms_iou=None,
+        mask_size=None,
+    ) -> None:
         super().__init__()
         self.num_select = num_select
+        self.score_threshold = score_threshold
+        self.per_class_threshold = per_class_threshold
+        self.target_class_ids = target_class_ids
+        self.nms_iou = nms_iou
+        self.mask_size = mask_size
+
+    def __setattr__(self, name, value):
+        """Reject the monkey-patch-era attribute names loudly.
+
+        Those names are no longer read. Left to succeed, setting one would be a
+        silent no-op that quietly restores the all-300-queries mask decode --
+        exactly the failure the filters exist to prevent, and invisible in
+        output because the results are still *correct*, merely ~13x slower and
+        unfiltered. An exception at the call site is the only way a missed
+        migration announces itself.
+        """
+        replacement = _LEGACY_POSTPROCESS_ATTRS.get(name)
+        if replacement is not None:
+            raise AttributeError(
+                f"PostProcess.{name} is the pre-consolidation monkey-patch API "
+                f"and is no longer read -- use PostProcess.{replacement} "
+                f"instead. Setting it silently would restore the unfiltered "
+                f"all-{getattr(self, 'num_select', 'K')}-queries mask decode "
+                f"(~13x slower) with no visible symptom."
+            )
+        super().__setattr__(name, value)
+
+    def _survivor_indices(self, scores_i, labels_i, boxes_i):
+        """Indices of the top-K entries for image ``i`` that survive filtering.
+
+        Returns ``None`` when no filter is configured, which lets ``forward``
+        take the stock path unchanged rather than an equivalent-but-different
+        gather.
+        """
+        if (
+            self.score_threshold is None
+            and not self.per_class_threshold
+            and self.target_class_ids is None
+            and self.nms_iou is None
+        ):
+            return None
+
+        keep = torch.ones_like(scores_i, dtype=torch.bool)
+
+        if self.score_threshold is not None or self.per_class_threshold:
+            base = float(self.score_threshold or 0.0)
+            thresh = torch.full_like(scores_i, base)
+            for cid, value in (self.per_class_threshold or {}).items():
+                thresh = torch.where(
+                    labels_i == int(cid), torch.full_like(scores_i, float(value)), thresh
+                )
+            keep &= scores_i > thresh
+
+        if self.target_class_ids is not None:
+            wanted = torch.as_tensor(
+                list(self.target_class_ids), device=labels_i.device
+            )
+            keep &= (labels_i.unsqueeze(-1) == wanted).any(dim=-1)
+
+        idx = torch.where(keep)[0]
+
+        if self.nms_iou is not None and idx.numel() > 1:
+            from torchvision.ops import batched_nms
+
+            idx = idx[
+                batched_nms(boxes_i[idx], scores_i[idx], labels_i[idx], self.nms_iou)
+            ]
+        return idx
+
+    def _mask_hw(self, target_sizes, i):
+        """Target (h, w) for mask interpolation, or ``None`` to skip it."""
+        if isinstance(self.mask_size, str):
+            if self.mask_size != "native":
+                raise ValueError(
+                    f"mask_size={self.mask_size!r} is not supported; use None "
+                    f"(the box frame), 'native', or an explicit (h, w)."
+                )
+            return None
+        if self.mask_size is not None:
+            return int(self.mask_size[0]), int(self.mask_size[1])
+        h, w = target_sizes[i].tolist()
+        return int(h), int(w)
 
     @torch.no_grad()
     def forward(self, outputs, target_sizes):
@@ -921,19 +1078,42 @@ class PostProcess(nn.Module):
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
         boxes = boxes * scale_fct[:, None, :]
 
-        # Optionally gather masks corresponding to the same top-K queries and resize to original size
         results = []
-        if out_masks is not None:
-            for i in range(out_masks.shape[0]):
+        batch_size = out_logits.shape[0]
+        for i in range(batch_size):
+            keep = self._survivor_indices(scores[i], labels[i], boxes[i])
+            if keep is None:
                 res_i = {'scores': scores[i], 'labels': labels[i], 'boxes': boxes[i]}
-                k_idx = topk_boxes[i]
-                masks_i = torch.gather(out_masks[i], 0, k_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, out_masks.shape[-2], out_masks.shape[-1]))  # [K, Hm, Wm]
-                h, w = target_sizes[i].tolist()
-                masks_i = F.interpolate(masks_i.unsqueeze(1), size=(int(h), int(w)), mode='bilinear', align_corners=False)  # [K,1,H,W]
+                query_idx = topk_boxes[i]
+            else:
+                res_i = {
+                    'scores': scores[i][keep],
+                    'labels': labels[i][keep],
+                    'boxes': boxes[i][keep],
+                }
+                query_idx = topk_boxes[i][keep]
+
+            if out_masks is not None:
+                # Gathered AFTER filtering, so masks are decoded only for
+                # survivors -- the whole point of doing the filtering here.
+                Hm, Wm = out_masks.shape[-2], out_masks.shape[-1]
+                masks_i = torch.gather(
+                    out_masks[i], 0,
+                    query_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, Hm, Wm),
+                )  # [K, Hm, Wm]
+                hw = self._mask_hw(target_sizes, i)
+                if hw is None:
+                    masks_i = masks_i.unsqueeze(1)  # [K,1,Hm,Wm]
+                elif masks_i.numel() > 0:
+                    masks_i = F.interpolate(
+                        masks_i.unsqueeze(1), size=hw,
+                        mode='bilinear', align_corners=False,
+                    )  # [K,1,H,W]
+                else:
+                    masks_i = masks_i.new_zeros((0, 1, hw[0], hw[1]))
                 res_i['masks'] = masks_i > 0.0
-                results.append(res_i)
-        else:
-            results = [{'scores': s, 'labels': l, 'boxes': b} for s, l, b in zip(scores, labels, boxes)]
+
+            results.append(res_i)
 
         return results
 
