@@ -310,7 +310,8 @@ class SetCriterion(nn.Module):
                 mask_point_sample_ratio: int = 16,
                 masked_loss: bool = False,
                 size_band_ignore: bool = False,
-                ignore_ioa_thresh: float = 0.5,):
+                ignore_ioa_thresh: float = 0.5,
+                region_class_mask: bool = False,):
         """ Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -337,11 +338,15 @@ class SetCriterion(nn.Module):
         self.ia_bce_loss = ia_bce_loss
         self.mask_point_sample_ratio = mask_point_sample_ratio
         self.masked_loss = masked_loss
+        self.region_class_mask = region_class_mask
         self.size_band_ignore = size_band_ignore
         self.ignore_ioa_thresh = ignore_ioa_thresh
-        if (masked_loss or size_band_ignore) and (use_varifocal_loss or use_position_supervised_loss):
+        if region_class_mask and not masked_loss:
+            raise ValueError("region_class_mask=True requires masked_loss=True")
+        if ((masked_loss or region_class_mask or size_band_ignore)
+                and (use_varifocal_loss or use_position_supervised_loss)):
             raise NotImplementedError(
-                "masked_loss / size_band_ignore are implemented for the "
+                "masked_loss / region_class_mask / size_band_ignore are implemented for the "
                 "ia_bce_loss and default sigmoid_focal_loss branches only. The "
                 "use_varifocal_loss and use_position_supervised_loss paths "
                 "would need their own loss-element masking before reduction."
@@ -372,6 +377,77 @@ class SetCriterion(nn.Module):
             n = min(cm.shape[0], C)
             mask[b, :n] = cm[:n]
         return mask.unsqueeze(1)
+
+    def _build_region_class_mask(self, targets, src_logits, pred_boxes):
+        """Build a per-query class mask from normalized half-open regions.
+
+        Queries outside every region retain their image-level ``class_mask``.
+        When regions overlap, target order determines precedence. The trailing
+        no-object channel is inherited from :meth:`_build_class_mask` and is
+        therefore always active.
+        """
+        if src_logits.shape[-1] != self.num_classes:
+            raise ValueError(
+                f"src_logits class width {src_logits.shape[-1]} must equal "
+                f"criterion num_classes {self.num_classes}"
+            )
+        B, Q, C = src_logits.shape
+        mask = self._build_class_mask(targets, src_logits).expand(B, Q, C).clone()
+        mask[..., -1] = 1
+        centers = pred_boxes[..., :2].detach()
+
+        for b, target in enumerate(targets):
+            has_boxes = "region_boxes" in target
+            has_masks = "region_class_masks" in target
+            if has_boxes != has_masks:
+                raise ValueError(
+                    f"targets[{b}] must provide region_boxes and "
+                    "region_class_masks together"
+                )
+            if not has_boxes:
+                continue
+
+            region_boxes = torch.as_tensor(
+                target["region_boxes"],
+                device=src_logits.device,
+                dtype=pred_boxes.dtype,
+            )
+            region_masks = torch.as_tensor(
+                target["region_class_masks"],
+                device=src_logits.device,
+                dtype=src_logits.dtype,
+            )
+            if region_boxes.ndim != 2 or region_boxes.shape[1] != 4:
+                raise ValueError(
+                    f"targets[{b}]['region_boxes'] must have shape (R, 4); "
+                    f"got {tuple(region_boxes.shape)}"
+                )
+            if (region_masks.ndim != 2
+                    or region_masks.shape[1] != C - 1):
+                raise ValueError(
+                    f"targets[{b}]['region_class_masks'] must have shape "
+                    f"(R, {C - 1}); got {tuple(region_masks.shape)}"
+                )
+            if region_masks.shape[0] != region_boxes.shape[0]:
+                raise ValueError(
+                    f"targets[{b}] region_boxes and region_class_masks must "
+                    "have the same number of rows; got "
+                    f"{region_boxes.shape[0]} and {region_masks.shape[0]}"
+                )
+            if region_boxes.shape[0] == 0:
+                continue
+
+            unassigned = torch.ones(Q, dtype=torch.bool, device=src_logits.device)
+            x, y = centers[b].unbind(-1)
+            for region_box, region_mask in zip(region_boxes, region_masks):
+                x1, y1, x2, y2 = region_box
+                inside = (
+                    (x >= x1) & (x < x2) & (y >= y1) & (y < y2) & unassigned
+                )
+                mask[b, inside, :C - 1] = region_mask
+                unassigned = unassigned & ~inside
+
+        return mask
 
     def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
         """Classification loss (Binary focal loss)
@@ -407,9 +483,15 @@ class SetCriterion(nn.Module):
             pos_weights[pos_ind] = t.to(pos_weights.dtype)
             neg_weights[pos_ind] = 1 - t.to(neg_weights.dtype)
             if self.masked_loss:
-                class_mask = self._build_class_mask(targets, src_logits)
-                pos_weights = pos_weights * class_mask
-                neg_weights = neg_weights * class_mask
+                if self.region_class_mask:
+                    region_mask = self._build_region_class_mask(
+                        targets, src_logits, outputs['pred_boxes'],
+                    )
+                    neg_weights = neg_weights * region_mask
+                else:
+                    class_mask = self._build_class_mask(targets, src_logits)
+                    pos_weights = pos_weights * class_mask
+                    neg_weights = neg_weights * class_mask
             if self.size_band_ignore:
                 drop = unmatched_ignore_overlap(
                     outputs['pred_boxes'], targets, indices, self.ignore_ioa_thresh,
@@ -1217,6 +1299,7 @@ def build_criterion_and_postprocessors(args):
 
     sum_group_losses = getattr(args, 'sum_group_losses', False)
     masked_loss = getattr(args, 'masked_loss', False)
+    region_class_mask = getattr(args, 'region_class_mask', False)
     size_band_ignore = getattr(args, 'size_band_ignore', False)
     ignore_ioa_thresh = getattr(args, 'ignore_ioa_thresh', 0.5)
     if args.segmentation_head:
@@ -1228,6 +1311,7 @@ def build_criterion_and_postprocessors(args):
                                 ia_bce_loss=args.ia_bce_loss,
                                 mask_point_sample_ratio=args.mask_point_sample_ratio,
                                 masked_loss=masked_loss,
+                                region_class_mask=region_class_mask,
                                 size_band_ignore=size_band_ignore,
                                 ignore_ioa_thresh=ignore_ioa_thresh)
     else:
@@ -1238,6 +1322,7 @@ def build_criterion_and_postprocessors(args):
                                 use_position_supervised_loss=args.use_position_supervised_loss,
                                 ia_bce_loss=args.ia_bce_loss,
                                 masked_loss=masked_loss,
+                                region_class_mask=region_class_mask,
                                 size_band_ignore=size_band_ignore,
                                 ignore_ioa_thresh=ignore_ioa_thresh)
     criterion.to(device)
