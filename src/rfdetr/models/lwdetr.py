@@ -550,9 +550,18 @@ class SetCriterion(nn.Module):
 
             target_classes_onehot = target_classes_onehot[:,:,:-1]
             if self.masked_loss:
-                class_mask = self._build_class_mask(targets, src_logits)
+                if self.region_class_mask:
+                    region_mask = self._build_region_class_mask(
+                        targets, src_logits, outputs['pred_boxes'],
+                    )
+                    # Positives bypass the conservative image-level intersection.
+                    effective_mask = region_mask.masked_fill(
+                        target_classes_onehot.bool(), 1,
+                    )
+                else:
+                    effective_mask = self._build_class_mask(targets, src_logits)
                 loss_ce = sigmoid_focal_loss_masked(
-                    src_logits, target_classes_onehot, class_mask, num_boxes,
+                    src_logits, target_classes_onehot, effective_mask, num_boxes,
                     alpha=self.focal_alpha, gamma=2,
                 ) * src_logits.shape[1]
             else:
