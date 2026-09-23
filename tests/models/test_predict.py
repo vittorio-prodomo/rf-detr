@@ -7,6 +7,7 @@ import socket
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
 import pytest
 import supervision as sv
 import torch
@@ -59,6 +60,36 @@ class _DummyRFDETR(RFDETR):
         return _DummyModel()
 
 
+class _MaskLogitsDummyModel(_DummyModel):
+    def postprocess(
+        self, predictions: Any, target_sizes: torch.Tensor
+    ) -> list[dict[str, torch.Tensor]]:
+        batch = target_sizes.shape[0]
+        results = []
+        for _ in range(batch):
+            results.append(
+                {
+                    "scores": torch.tensor([0.9, 0.1]),
+                    "labels": torch.tensor([1, 2]),
+                    "boxes": torch.tensor(
+                        [[0.0, 0.0, 1.0, 1.0], [1.0, 1.0, 2.0, 2.0]]
+                    ),
+                    "mask_logits": torch.tensor(
+                        [
+                            [[1.0, -1.0], [0.5, -0.5]],
+                            [[2.0, -2.0], [1.5, -1.5]],
+                        ]
+                    ),
+                }
+            )
+        return results
+
+
+class _MaskLogitsDummyRFDETR(_DummyRFDETR):
+    def get_model(self, config: SimpleNamespace) -> _MaskLogitsDummyModel:
+        return _MaskLogitsDummyModel()
+
+
 def test_predict_accepts_image_url() -> None:
     if not _is_online(_HTTP_HOST, _HTTP_PORT):
         pytest.skip("Offline environment, skipping HTTP predict URL test.")
@@ -66,3 +97,17 @@ def test_predict_accepts_image_url() -> None:
     detections = model.predict(_HTTP_IMAGE_URL)
     assert isinstance(detections, sv.Detections)
     assert detections.xyxy.shape == (1, 4)
+
+
+def test_predict_carries_float_mask_logits_in_detection_data() -> None:
+    model = _MaskLogitsDummyRFDETR()
+
+    detections = model.predict(torch.zeros((3, 2, 2)), threshold=0.5)
+
+    assert detections.mask is None
+    np.testing.assert_array_equal(
+        detections.data["mask_logits"],
+        np.array([[[1.0, -1.0], [0.5, -0.5]]], dtype=np.float32),
+    )
+    assert detections.data["mask_logits"].dtype == np.float32
+    assert len(detections) == 1

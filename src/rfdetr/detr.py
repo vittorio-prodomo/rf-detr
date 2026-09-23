@@ -385,6 +385,10 @@ class RFDETR:
             labels = labels[keep]
             boxes = boxes[keep]
 
+            data = {}
+            if "mask_logits" in result:
+                data["mask_logits"] = result["mask_logits"][keep].float().cpu().numpy()
+
             if "masks" in result:
                 masks = result["masks"]
                 masks = masks[keep]
@@ -394,12 +398,14 @@ class RFDETR:
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                     mask=masks.squeeze(1).cpu().numpy(),
+                    data=data,
                 )
             else:
                 detections = sv.Detections(
                     xyxy=boxes.float().cpu().numpy(),
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
+                    data=data,
                 )
 
             detections_list.append(detections)
