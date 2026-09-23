@@ -205,6 +205,60 @@ def test_filtering_everything_out_yields_well_formed_empties(outputs, target_siz
     assert out["masks"].shape == (0, 1, 32, 32)
 
 
+# ------------------------------------------------------- raw mask logits
+
+
+def test_return_mask_logits_returns_unmodified_head_logits(outputs, target_sizes):
+    """The opt-in result is raw [K,Hm,Wm] logits, not decoded masks."""
+    out = PostProcess(num_select=NUM_SELECT, return_mask_logits=True)(
+        outputs, target_sizes
+    )[0]
+
+    prob = outputs["pred_logits"].sigmoid()
+    _, topk = torch.topk(prob.view(2, -1), NUM_SELECT, dim=1)
+    query_idx = (topk // CLASSES)[0]
+    assert "masks" not in out
+    assert out["mask_logits"].dtype.is_floating_point
+    assert out["mask_logits"].shape == (NUM_SELECT, MASK_H, MASK_W)
+    assert torch.equal(out["mask_logits"], outputs["pred_masks"][0][query_idx])
+
+
+def test_return_mask_logits_gathers_the_nms_winner_mask_plane():
+    """NMS survivor order must also determine the corresponding logit plane."""
+    logits = torch.full((1, 2, CLASSES), -10.0)
+    logits[0, 0, 0] = 5.0
+    logits[0, 1, 0] = 4.0
+    outs = {
+        "pred_logits": logits,
+        "pred_boxes": torch.tensor(
+            [[[0.5, 0.5, 0.4, 0.4], [0.51, 0.51, 0.4, 0.4]]]
+        ),
+        "pred_masks": torch.stack(
+            (torch.full((3, 4), 1.0), torch.full((3, 4), 2.0))
+        ).unsqueeze(0),
+    }
+    sizes = torch.tensor([[32, 32]])
+
+    out = PostProcess(
+        num_select=2,
+        score_threshold=0.5,
+        nms_iou=0.5,
+        return_mask_logits=True,
+    )(outs, sizes)[0]
+
+    assert out["mask_logits"].shape == (1, 3, 4)
+    assert torch.equal(out["mask_logits"][0], outs["pred_masks"][0, 0])
+
+
+def test_empty_return_mask_logits_preserves_head_resolution(outputs, target_sizes):
+    out = PostProcess(
+        num_select=NUM_SELECT, score_threshold=1.1, return_mask_logits=True
+    )(outputs, target_sizes)[0]
+
+    assert "masks" not in out
+    assert out["mask_logits"].shape == (0, MASK_H, MASK_W)
+
+
 # ------------------------------------------------------------- mask_size
 
 
@@ -302,3 +356,7 @@ def test_capability_flag_is_detectable_on_the_class():
     instance attributes cannot serve, since setting them on an old PostProcess
     succeeds and silently does nothing."""
     assert getattr(PostProcess, "SUPPORTS_INFERENCE_FILTERS", False) is True
+
+
+def test_filtered_mask_logits_capability_flag_is_detectable_on_the_class():
+    assert getattr(PostProcess, "SUPPORTS_FILTERED_MASK_LOGITS", False) is True

@@ -1029,6 +1029,9 @@ class PostProcess(nn.Module):
             behaviour (``target_sizes``, i.e. the box frame). ``"native"``
             skips the interpolation entirely, keeping the head's own output
             resolution. An explicit ``(h, w)`` interpolates to that size.
+        return_mask_logits: return the raw, filtered mask-head logits instead
+            of decoded boolean masks. The logits retain their native head
+            resolution and have shape ``[K, Hm, Wm]``.
     """
 
     #: Capability marker for consumers that may be running against either this
@@ -1039,6 +1042,10 @@ class PostProcess(nn.Module):
     #: assume it. ``hasattr(PostProcess, "SUPPORTS_INFERENCE_FILTERS")`` is the
     #: check; the instance attributes are not usable for feature detection.
     SUPPORTS_INFERENCE_FILTERS = True
+
+    #: Capability marker for consumers that require raw mask-head logits after
+    #: inference filtering rather than the default decoded boolean masks.
+    SUPPORTS_FILTERED_MASK_LOGITS = True
 
     #: Set so that any surviving copy of the old monkey-patch installer -- each
     #: of which guards on ``if getattr(PostProcess, "_bridge_patched", False):
@@ -1055,6 +1062,7 @@ class PostProcess(nn.Module):
         target_class_ids=None,
         nms_iou=None,
         mask_size=None,
+        return_mask_logits=False,
     ) -> None:
         super().__init__()
         self.num_select = num_select
@@ -1063,6 +1071,7 @@ class PostProcess(nn.Module):
         self.target_class_ids = target_class_ids
         self.nms_iou = nms_iou
         self.mask_size = mask_size
+        self.return_mask_logits = return_mask_logits
 
     def __setattr__(self, name, value):
         """Reject the monkey-patch-era attribute names loudly.
@@ -1192,6 +1201,10 @@ class PostProcess(nn.Module):
                     out_masks[i], 0,
                     query_idx.unsqueeze(-1).unsqueeze(-1).repeat(1, Hm, Wm),
                 )  # [K, Hm, Wm]
+                if self.return_mask_logits:
+                    res_i['mask_logits'] = masks_i
+                    results.append(res_i)
+                    continue
                 hw = self._mask_hw(target_sizes, i)
                 if hw is None:
                     masks_i = masks_i.unsqueeze(1)  # [K,1,Hm,Wm]
