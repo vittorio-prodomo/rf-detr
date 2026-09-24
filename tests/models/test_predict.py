@@ -6,6 +6,7 @@
 import socket
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import patch
 
 import numpy as np
 import pytest
@@ -88,6 +89,26 @@ class _MaskLogitsDummyModel(_DummyModel):
 class _MaskLogitsDummyRFDETR(_DummyRFDETR):
     def get_model(self, config: SimpleNamespace) -> _MaskLogitsDummyModel:
         return _MaskLogitsDummyModel()
+
+
+def test_pretrain_download_is_skipped_when_weights_are_none() -> None:
+    model = object.__new__(RFDETR)
+    model.model_config = SimpleNamespace(pretrain_weights=None)
+
+    with patch("rfdetr.detr.download_pretrain_weights") as download:
+        model.maybe_download_pretrain_weights()
+
+    download.assert_not_called()
+
+
+def test_pretrain_download_receives_configured_weight_path() -> None:
+    model = object.__new__(RFDETR)
+    model.model_config = SimpleNamespace(pretrain_weights="/tmp/model.pth")
+
+    with patch("rfdetr.detr.download_pretrain_weights") as download:
+        model.maybe_download_pretrain_weights()
+
+    download.assert_called_once_with("/tmp/model.pth")
 
 
 def test_predict_accepts_image_url() -> None:
