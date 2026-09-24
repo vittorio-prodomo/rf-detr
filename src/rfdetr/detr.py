@@ -78,10 +78,9 @@ class RFDETR:
         self._optimized_dtype = None
 
     def maybe_download_pretrain_weights(self):
-        """
-        Download pre-trained weights if they are not already downloaded.
-        """
-        download_pretrain_weights(self.model_config.pretrain_weights)
+        """Download configured pretrained weights, if any."""
+        if self.model_config.pretrain_weights is not None:
+            download_pretrain_weights(self.model_config.pretrain_weights)
 
     def get_model_config(self, **kwargs):
         """
@@ -385,6 +384,10 @@ class RFDETR:
             labels = labels[keep]
             boxes = boxes[keep]
 
+            data = {}
+            if "mask_logits" in result:
+                data["mask_logits"] = result["mask_logits"][keep].float().cpu().numpy()
+
             if "masks" in result:
                 masks = result["masks"]
                 masks = masks[keep]
@@ -394,12 +397,14 @@ class RFDETR:
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
                     mask=masks.squeeze(1).cpu().numpy(),
+                    data=data,
                 )
             else:
                 detections = sv.Detections(
                     xyxy=boxes.float().cpu().numpy(),
                     confidence=scores.float().cpu().numpy(),
                     class_id=labels.cpu().numpy(),
+                    data=data,
                 )
 
             detections_list.append(detections)

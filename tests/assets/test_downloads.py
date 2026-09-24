@@ -37,15 +37,18 @@ def mock_file_operations():
 class TestDownloadPretrainWeights:
     """Test download_pretrain_weights function with mocking for offline testing."""
 
-    def test_download_from_local_model_weights(self, mock_file_operations):
+    def test_download_from_local_model_weights(self, mock_file_operations, tmp_path):
         """Test downloading a model from local ModelWeights."""
-        download_pretrain_weights("rf-detr-base.pth")
+        expected_path = str(tmp_path / "rf-detr-base.pth")
+        with patch('rfdetr.cache.get_cache_dir', return_value=tmp_path):
+            result = download_pretrain_weights("rf-detr-base.pth")
 
         # Should call download with correct URL and MD5
         mock_file_operations['download'].assert_called_once()
         call_kwargs = mock_file_operations['download'].call_args[1]
 
-        assert call_kwargs['filename'] == "rf-detr-base.pth"
+        assert call_kwargs['filename'] == expected_path
+        assert result == expected_path
         assert "rf-detr-base-coco.pth" in call_kwargs['url']
         assert call_kwargs['expected_md5'] is not None  # Should have MD5 hash
         assert len(call_kwargs['expected_md5']) == 32  # Valid MD5 hash
@@ -203,19 +206,24 @@ class TestDownloadIntegration:
     @patch('rfdetr.assets.model_weights.os.path.exists')
     @patch('rfdetr.assets.model_weights._validate_file_md5')
     @patch('rfdetr.assets.model_weights._download_file')
-    def test_download_flow_for_real_model(self, mock_download, mock_validate, mock_exists):
+    def test_download_flow_for_real_model(
+        self, mock_download, mock_validate, mock_exists, tmp_path
+    ):
         """Test the complete download flow for a real model."""
         mock_exists.return_value = False
         mock_validate.return_value = True
 
         # Download a real model (mocked network)
-        download_pretrain_weights("rf-detr-base.pth")
+        expected_path = str(tmp_path / "rf-detr-base.pth")
+        with patch('rfdetr.cache.get_cache_dir', return_value=tmp_path):
+            result = download_pretrain_weights("rf-detr-base.pth")
 
         # Verify download was called with correct parameters
         mock_download.assert_called_once()
         call_kwargs = mock_download.call_args[1]
 
-        assert call_kwargs['filename'] == "rf-detr-base.pth"
+        assert call_kwargs['filename'] == expected_path
+        assert result == expected_path
         assert "storage.googleapis.com/rfdetr" in call_kwargs['url']
         assert call_kwargs['expected_md5'] == "b4d3ce46099eaed50626ede388caf979"
 
